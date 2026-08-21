@@ -84,7 +84,7 @@
   }
   .stage span{font-family:'Cormorant Garamond', serif; letter-spacing:.4em; font-size:12px; color:var(--pink-soft); text-transform:uppercase; font-weight:600;}
 
-  .seatmap{display:flex; flex-direction:column; align-items:center; gap:7px; overflow-x:auto; padding:6px 4px 14px;}
+  .seatmap{display:flex; flex-direction:column; align-items:center; gap:7px; overflow-x:auto; padding:6px 4px 14px; width:100%;}
   .seat-row{display:flex; align-items:center; gap:6px;}
   .row-label{width:18px; font-size:11px; color:var(--muted); font-weight:700; text-align:center;}
   .seat{
@@ -201,6 +201,10 @@
     .summary{gap:14px;}
     .summary .stat b{font-size:21px;}
     .seatmap{padding:6px 2px 10px;}
+    .seat{width:13px; height:12px; border-radius:3px 3px 2px 2px;}
+    .seat-row{gap:3px;}
+    .aisle-gap{width:9px;}
+    .row-label{width:12px; font-size:8px;}
   }
   @media(max-width:360px){
     .brand .eyebrow{display:none;}
@@ -464,14 +468,26 @@ function fitSeatmap(container){
   const firstRow = map.querySelector('.seat-row');
   if(!firstRow) return;
   requestAnimationFrame(()=>{
-    const natural = firstRow.scrollWidth;
-    const available = map.clientWidth;
-    if(natural > available && available > 0){
-      const ratio = Math.max(0.4, available/natural);
-      map.style.zoom = ratio;
-    }
+    requestAnimationFrame(()=>{
+      const natural = firstRow.scrollWidth;
+      const available = map.clientWidth;
+      if(natural > available && available > 0){
+        const ratio = Math.max(0.4, (available - 4) / natural);
+        map.style.zoom = ratio;
+      } else {
+        map.style.zoom = '1';
+      }
+    });
   });
 }
+let resizeTimer = null;
+window.addEventListener('resize', ()=>{
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(()=>{
+    const mapArea = document.getElementById('mapArea');
+    if(mapArea) fitSeatmap(mapArea);
+  }, 150);
+});
 
 function showSessionSelector(){
   const show = CONFIG.shows.find(s=>s.id===currentShowId);
