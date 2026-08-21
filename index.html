@@ -4,11 +4,15 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Studio A — Bilheteria</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Studio A">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <style>
   :root{
@@ -171,6 +175,15 @@
 
   .note{font-size:12px; color:var(--muted); margin-top:4px;}
 
+  .scan-wrap{margin:14px 0;}
+  #scanVideo{width:100%; max-width:420px; border-radius:12px; border:2px solid var(--pink); display:block;}
+  .scan-banner{margin-top:14px; padding:12px 14px; border-radius:10px; font-weight:600; font-size:14px;}
+  .scan-banner.ok{background:rgba(60,180,110,.15); color:#8fe0b0; border:1px solid #3cb46e;}
+  .scan-banner.warn{background:rgba(240,196,25,.15); color:#f0c419; border:1px solid #f0c419;}
+  .scan-banner.invalid{background:rgba(176,48,74,.18); color:#f0a3b3; border:1px solid var(--danger);}
+  .checkin-box{display:flex; align-items:center; justify-content:space-between; gap:10px; background:var(--bg-panel-2); border:1px solid var(--line); border-radius:8px; padding:9px 12px; font-size:12.5px; color:var(--muted); margin-bottom:14px; flex-wrap:wrap;}
+  .checkin-box.in{color:#8fe0b0;}
+
   .auth-status{display:flex; align-items:center; gap:10px;}
   .auth-status .who{font-size:12px; color:var(--muted);}
   .login-screen{max-width:360px; margin:40px auto;}
@@ -224,9 +237,11 @@
     <nav class="tabs">
       <button data-tab="publico" class="active">Site Público</button>
       <button data-tab="painel">Painel de Controle</button>
+      <button data-tab="checkin">Check-in</button>
       <button data-tab="config">Configurações</button>
     </nav>
     <div id="authStatus" class="auth-status"></div>
+    <button id="btnInstallPWA" class="btn gold tiny" style="display:none;">⬇️ Instalar app</button>
   </header>
 
   <div id="content"></div>
@@ -593,6 +608,10 @@ async function openSeatModal(seatId){
     ${data.status && data.status!=='livre' ? `<div class="ticket-actions">
       <button class="btn ghost tiny" id="btnImprimir" type="button">🖨️ Imprimir ingresso</button>
       <button class="btn ghost tiny" id="btnEnviarEmail" type="button" ${data.email?'':'disabled title="Preencha e salve o e-mail primeiro"'}>✉️ Enviar por e-mail</button>
+    </div>
+    <div class="checkin-box ${data.checkin?'in':''}">
+      ${data.checkin ? `✅ Entrada confirmada às ${new Date(data.checkinAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}` : '⏳ Ainda não deu entrada na sala'}
+      <button class="btn ghost tiny" id="btnToggleCheckin" type="button">${data.checkin ? 'Desfazer entrada' : 'Marcar entrada manualmente'}</button>
     </div>` : ''}
     <div class="modal-actions">
       <button class="btn danger tiny" id="btnLimpar">Liberar assento</button>
@@ -637,11 +656,27 @@ async function openSeatModal(seatId){
       await sendTicketEmail({ seatId, show, session, nome: data.nome, email: data.email });
     });
   }
+  const btnCheckin = overlay.querySelector('#btnToggleCheckin');
+  if(btnCheckin){
+    btnCheckin.addEventListener('click', async ()=>{
+      const updated = Object.assign({}, data, data.checkin ? {checkin:false, checkinAt:null} : {checkin:true, checkinAt:Date.now()});
+      await saveSeat(currentSessionId, seatId, updated);
+      overlay.remove();
+      showToast(updated.checkin ? 'Entrada marcada' : 'Entrada desfeita');
+    });
+  }
 }
 
 /* ---------- Ingresso (imprimir / e-mail) ---------- */
 function ticketCode(sessionId, seatId){
-  return (sessionId+'-'+seatId).toUpperCase();
+  return sessionId+'-'+seatId;
+}
+function findShowAndSession(sessionId){
+  for(const show of CONFIG.shows){
+    const session = (show.sessions||[]).find(se=>se.id===sessionId);
+    if(session) return {show, session};
+  }
+  return null;
 }
 function buildTicketHtml({seatId, show, session, nome, status}){
   const code = ticketCode(currentSessionId, seatId);
@@ -655,7 +690,7 @@ function buildTicketHtml({seatId, show, session, nome, status}){
       <p class="ticket-seat">Assento <b>${seatId}</b></p>
       <p class="ticket-name">${escapeHtml(nome||'')}</p>
       <img class="ticket-qr" src="${qr}" alt="QR"/>
-      <p class="ticket-code">${code}</p>
+      <p class="ticket-code">${code.toUpperCase()}</p>
       <p class="ticket-status">${status==='vendido' ? 'PAGO' : 'RESERVADO'}</p>
     </div>`;
 }
@@ -728,6 +763,11 @@ function renderConfig(){
   detachLiveSeats();
   const content = document.getElementById('content');
   let html = `<div class="panel">
+    <h2>Instalar como app</h2>
+    <p class="note" style="margin-top:-6px;">No Android/Chrome, aparece o botão "⬇️ Instalar app" no topo. No iPhone (Safari), não tem esse botão automático — é manual: toque no ícone de Compartilhar (□↑) e depois em "Adicionar à Tela de Início".</p>
+  </div>
+
+  <div class="panel">
     <h2>Configurações da sala</h2>
     <p class="note" style="margin-top:-8px;">O palco fica de frente para o público. Da esquerda para a direita: <b>Esquerda</b> · <b>Centro</b> · <b>Direita (alunos, não vendável)</b>.</p>
     <div class="row" style="margin-top:12px;">
@@ -811,11 +851,153 @@ function renderConfig(){
   });
 }
 
+/* ---------- Check-in (leitura de QR) ---------- */
+let scanStream = null;
+let scanLoopId = null;
+let lastScanCode = null;
+let lastScanAt = 0;
+
+function stopScanner(){
+  if(scanLoopId){ cancelAnimationFrame(scanLoopId); scanLoopId = null; }
+  if(scanStream){ scanStream.getTracks().forEach(t=>t.stop()); scanStream = null; }
+}
+
+async function renderCheckin(){
+  if(!currentUser){ renderLoginScreen(); return; }
+  detachLiveSeats();
+  const content = document.getElementById('content');
+  content.innerHTML = `<div class="panel">
+    <h2>Check-in — leitura de ingresso</h2>
+    <p class="note" style="margin-top:-6px;">Aponte a câmera para o QR code do ingresso (impresso ou na tela do celular da pessoa).</p>
+    <button class="btn gold" id="btnStartScan">📷 Ligar câmera</button>
+    <button class="btn ghost" id="btnStopScan" style="display:none;">Parar câmera</button>
+    <div class="scan-wrap" id="scanWrap" style="display:none;">
+      <video id="scanVideo" playsinline muted></video>
+      <canvas id="scanCanvas" style="display:none;"></canvas>
+    </div>
+    <div id="scanResult"></div>
+    <div class="field" style="margin-top:16px;"><label>Ou digite o código manualmente</label>
+      <div class="row">
+        <input id="manualCode" placeholder="Ex: S1_1-A12" style="flex:1;"/>
+        <button class="btn ghost tiny" id="btnManualCheck">Verificar</button>
+      </div>
+    </div>
+    <div id="checkinLog"></div>
+  </div>`;
+
+  const btnStart = document.getElementById('btnStartScan');
+  const btnStop = document.getElementById('btnStopScan');
+  const wrap = document.getElementById('scanWrap');
+  const video = document.getElementById('scanVideo');
+  const canvas = document.getElementById('scanCanvas');
+  const ctx = canvas.getContext('2d', { willReadFrequently: true });
+
+  btnStart.addEventListener('click', async ()=>{
+    try{
+      scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } });
+      video.srcObject = scanStream;
+      await video.play();
+      wrap.style.display = 'block';
+      btnStart.style.display = 'none';
+      btnStop.style.display = 'inline-block';
+      scanLoop(video, canvas, ctx);
+    }catch(e){
+      showToast('Não consegui acessar a câmera — verifique a permissão do navegador');
+    }
+  });
+  btnStop.addEventListener('click', ()=>{
+    stopScanner();
+    wrap.style.display = 'none';
+    btnStart.style.display = 'inline-block';
+    btnStop.style.display = 'none';
+  });
+  document.getElementById('btnManualCheck').addEventListener('click', ()=>{
+    const raw = document.getElementById('manualCode').value.trim();
+    if(!raw) return;
+    handleScannedText('STUDIOA|'+raw.replace(/^STUDIOA\|/i,''));
+  });
+}
+
+function scanLoop(video, canvas, ctx){
+  if(video.readyState === video.HAVE_ENOUGH_DATA){
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    const code = jsQR(imageData.data, imageData.width, imageData.height);
+    if(code && code.data){
+      const now = Date.now();
+      if(code.data !== lastScanCode || now - lastScanAt > 4000){
+        lastScanCode = code.data;
+        lastScanAt = now;
+        handleScannedText(code.data);
+      }
+    }
+  }
+  scanLoopId = requestAnimationFrame(()=> scanLoop(video, canvas, ctx));
+}
+
+async function handleScannedText(text){
+  const resultBox = document.getElementById('scanResult');
+  if(!resultBox) return;
+  if(!text.startsWith('STUDIOA|')){
+    resultBox.innerHTML = `<div class="scan-banner invalid">❌ Este QR code não é um ingresso do Studio A</div>`;
+    return;
+  }
+  const code = text.replace('STUDIOA|','');
+  const idx = code.lastIndexOf('-');
+  if(idx<0){
+    resultBox.innerHTML = `<div class="scan-banner invalid">❌ Código inválido</div>`;
+    return;
+  }
+  const sessionId = code.slice(0, idx);
+  const seatId = code.slice(idx+1);
+  const found = findShowAndSession(sessionId);
+  if(!found){
+    resultBox.innerHTML = `<div class="scan-banner invalid">❌ Sessão não encontrada — pode ser de outro evento</div>`;
+    return;
+  }
+  let seat;
+  try{
+    const snap = await db.ref('seats/'+sessionId+'/'+seatId).once('value');
+    seat = snap.val();
+  }catch(e){ seat = null; }
+
+  if(!seat || seat.status==='livre'){
+    resultBox.innerHTML = `<div class="scan-banner invalid">❌ Assento ${seatId} não consta como vendido/reservado</div>`;
+    addCheckinLog(seatId, found, null, 'invalido');
+    return;
+  }
+  if(seat.checkin){
+    const hora = new Date(seat.checkinAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+    resultBox.innerHTML = `<div class="scan-banner warn">⚠️ Já tinha dado entrada às ${hora} — ${escapeHtml(seat.nome||'')} — Assento ${seatId}</div>`;
+    addCheckinLog(seatId, found, seat, 'repetido');
+    return;
+  }
+  const updated = Object.assign({}, seat, { checkin:true, checkinAt: Date.now() });
+  await db.ref('seats/'+sessionId+'/'+seatId).set(updated);
+  resultBox.innerHTML = `<div class="scan-banner ok">✅ Entrada confirmada — ${escapeHtml(seat.nome||'')} — Assento ${seatId} — ${escapeHtml(found.show.name)}</div>`;
+  addCheckinLog(seatId, found, updated, 'ok');
+}
+
+const checkinLogEntries = [];
+function addCheckinLog(seatId, found, seat, kind){
+  const log = document.getElementById('checkinLog');
+  if(!log) return;
+  checkinLogEntries.unshift({ time: new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}), seatId, showName: found.show.name, nome: seat ? seat.nome : '', kind });
+  log.innerHTML = '<div class="found-list">' + checkinLogEntries.slice(0,15).map(e=>
+    `<div class="found-item"><span>${e.time} — Assento <b>${e.seatId}</b> — ${escapeHtml(e.nome||'—')} (${escapeHtml(e.showName)})</span><span class="badge ${e.kind==='ok'?'vendido':'reservado'}">${e.kind==='ok'?'entrou':e.kind==='repetido'?'repetido':'inválido'}</span></div>`
+  ).join('') + '</div>';
+}
+
+
 function switchTab(tab){
+  if(currentTab==='checkin' && tab!=='checkin'){ stopScanner(); }
   currentTab = tab;
   document.querySelectorAll('nav.tabs button').forEach(b=> b.classList.toggle('active', b.dataset.tab===tab));
   if(tab==='painel') renderPainel();
   else if(tab==='publico') renderPublico();
+  else if(tab==='checkin') renderCheckin();
   else renderConfig();
 }
 
@@ -838,6 +1020,70 @@ function renderSetupScreen(){
     <p class="note">Depois de configurado, todas as reservas e vendas ficam salvas e sincronizadas automaticamente entre todos os aparelhos.</p>
   </div>`;
 }
+
+/* ---------- PWA (instalar como app) ---------- */
+(function setupPWA(){
+  const logoSrc = document.querySelector('.brand img').src;
+
+  const manifest = {
+    name: "Studio A — Bilheteria",
+    short_name: "Studio A",
+    start_url: ".",
+    scope: ".",
+    display: "standalone",
+    background_color: "#0c0a0d",
+    theme_color: "#0c0a0d",
+    icons: [
+      { src: logoSrc, sizes: "192x192", type: "image/png" },
+      { src: logoSrc, sizes: "512x512", type: "image/png" }
+    ]
+  };
+  const manifestBlob = new Blob([JSON.stringify(manifest)], { type: 'application/manifest+json' });
+  const manifestLink = document.createElement('link');
+  manifestLink.rel = 'manifest';
+  manifestLink.href = URL.createObjectURL(manifestBlob);
+  document.head.appendChild(manifestLink);
+
+  const appleIcon = document.createElement('link');
+  appleIcon.rel = 'apple-touch-icon';
+  appleIcon.href = logoSrc;
+  document.head.appendChild(appleIcon);
+
+  const themeColorMeta = document.createElement('meta');
+  themeColorMeta.name = 'theme-color';
+  themeColorMeta.content = '#0c0a0d';
+  document.head.appendChild(themeColorMeta);
+
+  if('serviceWorker' in navigator){
+    const swCode = "self.addEventListener('install', e=>self.skipWaiting());"
+      + "self.addEventListener('activate', e=>self.clients.claim());"
+      + "self.addEventListener('fetch', e=>{});";
+    const swBlob = new Blob([swCode], { type: 'application/javascript' });
+    navigator.serviceWorker.register(URL.createObjectURL(swBlob), { scope: './' }).catch(()=>{});
+  }
+
+  let deferredInstallPrompt = null;
+  window.addEventListener('beforeinstallprompt', (e)=>{
+    e.preventDefault();
+    deferredInstallPrompt = e;
+    const btn = document.getElementById('btnInstallPWA');
+    if(btn) btn.style.display = 'inline-block';
+  });
+  const installBtn = document.getElementById('btnInstallPWA');
+  if(installBtn){
+    installBtn.addEventListener('click', async ()=>{
+      if(!deferredInstallPrompt) return;
+      deferredInstallPrompt.prompt();
+      await deferredInstallPrompt.userChoice;
+      deferredInstallPrompt = null;
+      installBtn.style.display = 'none';
+    });
+  }
+  window.addEventListener('appinstalled', ()=>{
+    const btn = document.getElementById('btnInstallPWA');
+    if(btn) btn.style.display = 'none';
+  });
+})();
 
 (async function init(){
   document.getElementById('content').innerHTML = '<div class="panel"><div class="empty">Carregando bilheteria…</div></div>';
