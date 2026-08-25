@@ -29,6 +29,7 @@
     --seat-free-hover: #554957;
     --seat-reserved: #f0c419;
     --seat-sold: var(--pink);
+    --seat-indisponivel: #e02929;
     --seat-aluno: #2a2530;
     --danger: #b0304a;
     --radius: 10px;
@@ -99,6 +100,10 @@
   .seat.aisle-gap{background:transparent; border:none; cursor:default; width:16px;}
   .seat:hover:not(.aisle-gap):not(.readonly){background:var(--seat-free-hover); transform:translateY(-1px);}
   .seat.reservado{background:var(--seat-reserved);}
+  .seat.indisponivel{
+    background:var(--seat-indisponivel); color:#fff; display:flex; align-items:center; justify-content:center;
+    font-size:11px; font-weight:800; cursor:pointer;
+  }
   .seat.vendido{background:var(--seat-sold);}
   .seat.aluno{
     background: repeating-linear-gradient(45deg, var(--seat-aluno), var(--seat-aluno) 3px, #14111a 3px, #14111a 6px);
@@ -137,11 +142,12 @@
   @media print{
     body *{visibility:hidden;}
     .print-only, .print-only *{visibility:visible;}
-    .print-only{display:block; position:fixed; inset:0; background:#fff;}
+    .print-only{display:block; position:static; background:#fff;}
     .ticket{
       width:320px; margin:40px auto; text-align:center; font-family:'Work Sans', sans-serif;
       border:2px dashed #000; border-radius:14px; padding:24px; color:#000;
     }
+    .ticket + .ticket{ page-break-before: always; }
     .ticket-logo{width:64px; height:64px; border-radius:12px; margin-bottom:8px;}
     .ticket h2{font-family:'Cormorant Garamond', serif; margin:4px 0; font-size:24px;}
     .ticket-show{font-weight:700; font-size:16px; margin:6px 0 2px;}
@@ -156,6 +162,11 @@
   .show-card{background:var(--bg-panel-2); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:12px;}
   .show-card .show-head{display:flex; gap:10px; align-items:center; margin-bottom:10px;}
   .show-head input{flex:1; font-weight:700; font-size:15px;}
+  .bg-upload-row{display:flex; align-items:center; gap:12px; margin-bottom:12px;}
+  .bg-preview{width:90px; height:50px; object-fit:cover; border-radius:8px; border:1px solid var(--line);}
+  .bg-preview.empty-bg{display:flex; align-items:center; justify-content:center; font-size:10px; color:var(--muted); background:var(--bg-panel-2);}
+  .bg-upload-actions{display:flex; flex-direction:column; gap:6px;}
+  .bg-upload-label{cursor:pointer; display:inline-block;}
   .session-row{display:flex; gap:8px; align-items:center; margin-bottom:8px; flex-wrap:wrap;}
   .session-row input{padding:7px 9px; font-size:13px;}
   .tiny{font-size:11px; padding:6px 9px;}
@@ -169,11 +180,14 @@
   .badge{display:inline-block; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:700;}
   .badge.reservado{background:rgba(240,196,25,.18); color:#f0c419;}
   .badge.vendido{background:rgba(228,19,111,.22); color:var(--pink-soft);}
+  .badge.indisponivel{background:rgba(224,41,41,.2); color:#f0a3b3;}
+  .badge.livre{background:rgba(255,255,255,.08); color:var(--muted);}
 
   .toast{position:fixed; bottom:22px; left:50%; transform:translateX(-50%); background:var(--pink); color:#210a15; padding:10px 18px; border-radius:8px; font-weight:600; font-size:13px; box-shadow:var(--shadow); z-index:60; opacity:0; pointer-events:none; transition:.25s;}
   .toast.show{opacity:1; transform:translate(-50%,-6px);}
 
   .note{font-size:12px; color:var(--muted); margin-top:4px;}
+  .countdown{text-align:center; font-family:'Cormorant Garamond', serif; font-size:16px; color:var(--pink-soft); margin:4px 0 -4px;}
 
   .scan-wrap{margin:14px 0;}
   #scanVideo{width:100%; max-width:420px; border-radius:12px; border:2px solid var(--pink); display:block;}
@@ -338,6 +352,26 @@ let currentTab = 'publico';
 let currentShowId = null;
 let currentSessionId = null;
 let liveSeatsRef = null;
+let countdownTimer = null;
+function stopCountdown(){
+  if(countdownTimer){ clearInterval(countdownTimer); countdownTimer = null; }
+}
+function formatCountdown(session){
+  if(!session || !session.date) return null;
+  const target = new Date(session.date + 'T' + (session.time || '00:00') + ':00');
+  if(isNaN(target.getTime())) return null;
+  const diff = target.getTime() - Date.now();
+  if(diff <= 0) return 'Esta sessão já foi realizada';
+  const totalMinutes = Math.floor(diff / 60000);
+  const days = Math.floor(totalMinutes / 1440);
+  const hours = Math.floor((totalMinutes % 1440) / 60);
+  const minutes = totalMinutes % 60;
+  const parts = [];
+  if(days) parts.push(days + (days===1?' dia':' dias'));
+  if(hours || days) parts.push(hours + 'h');
+  parts.push(minutes + 'min');
+  return 'Faltam ' + parts.join(' ') + ' para esta sessão';
+}
 let liveSeatsHandler = null;
 
 const DEFAULT_CONFIG = {
@@ -353,6 +387,27 @@ const DEFAULT_CONFIG = {
 };
 
 function uid(prefix){ return prefix + '_' + Math.random().toString(36).slice(2,8); }
+function resizeImageToDataUrl(file, maxW, maxH){
+  return new Promise((resolve, reject)=>{
+    const reader = new FileReader();
+    reader.onerror = ()=> reject(new Error('read failed'));
+    reader.onload = ()=>{
+      const img = new Image();
+      img.onerror = ()=> reject(new Error('image failed'));
+      img.onload = ()=>{
+        let w = img.width, h = img.height;
+        const ratio = Math.min(1, maxW / w, maxH / h);
+        w = Math.round(w * ratio); h = Math.round(h * ratio);
+        const canvas = document.createElement('canvas');
+        canvas.width = w; canvas.height = h;
+        canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL('image/jpeg', 0.82));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
 function showToast(msg){
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
@@ -412,10 +467,18 @@ async function saveSeat(sessionId, seatId, seatData){
   try{
     if(seatData === null){
       await db.ref('seats/'+sessionId+'/'+seatId).remove();
+      await logHistory(sessionId, seatId, { status:'livre', nome:'', at: Date.now(), by: currentUser?currentUser.email:'?' });
     } else {
       await db.ref('seats/'+sessionId+'/'+seatId).set(seatData);
+      await logHistory(sessionId, seatId, { status:seatData.status, nome:seatData.nome||'', at: Date.now(), by: currentUser?currentUser.email:'?' });
     }
   }catch(e){ showToast('Erro ao salvar assento'); }
+}
+function logHistory(sessionId, seatId, entry){
+  return db.ref('history/'+sessionId+'/'+seatId).push(entry).catch(()=>{});
+}
+function statusLabel(st){
+  return st==='vendido' ? 'Vendido' : st==='indisponivel' ? 'Indisponível' : 'Liberado';
 }
 
 /* ---------- Layout helpers (3 quadrantes) ---------- */
@@ -439,7 +502,8 @@ function renderSeatMap(seats, readonly){
       } else {
         const st = seats[id] ? seats[id].status : 'livre';
         const cls = st==='livre' ? '' : st;
-        html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${id}"></div>`;
+        const mark = st==='indisponivel' ? '✕' : '';
+        html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${id}">${mark}</div>`;
       }
       if(n === CONFIG.seatsLeft || n === CONFIG.seatsLeft + CONFIG.seatsCenter){
         html += `<div class="seat aisle-gap"></div>`;
@@ -450,8 +514,8 @@ function renderSeatMap(seats, readonly){
   html += '</div></div>';
   html += `<div class="legend">
     <div class="item"><span class="swatch" style="background:var(--seat-free)"></span>Disponível</div>
-    <div class="item"><span class="swatch" style="background:var(--seat-reserved)"></span>Reservado</div>
     <div class="item"><span class="swatch" style="background:var(--seat-sold)"></span>Vendido / Pago</div>
+    <div class="item"><span class="swatch" style="background:var(--seat-indisponivel)"></span>Indisponível (quebrada)</div>
     <div class="item"><span class="swatch aluno-sw"></span>Reservado — alunos</div>
   </div>`;
   return html;
@@ -460,13 +524,13 @@ function renderSeatMap(seats, readonly){
 function computeSummary(seats){
   const sellable = CONFIG.rows * (CONFIG.seatsLeft + CONFIG.seatsCenter);
   const alunos = CONFIG.rows * CONFIG.seatsRight;
-  let reservado=0, vendido=0;
+  let indisponivel=0, vendido=0;
   Object.values(seats).forEach(s=>{
-    if(s.status==='reservado') reservado++;
+    if(s.status==='indisponivel') indisponivel++;
     if(s.status==='vendido') vendido++;
   });
-  const livre = sellable - reservado - vendido;
-  return {sellable, livre, reservado, vendido, alunos};
+  const livre = sellable - indisponivel - vendido;
+  return {sellable, livre, indisponivel, vendido, alunos};
 }
 
 function sessionLabel(session){
@@ -531,6 +595,10 @@ async function renderPainel(){
   content.innerHTML = `<div class="panel">
     <h2>Painel de Controle — venda por atendente</h2>
     ${showSessionSelector()}
+    <div class="row" style="margin-top:8px;">
+      <button class="btn ghost tiny" id="btnImprimirLote" type="button">🖨️ Imprimir ingressos vendidos desta sessão</button>
+      <button class="btn ghost tiny" id="btnListaEspera" type="button">📋 Lista de espera</button>
+    </div>
     <div class="search-box" style="margin-top:14px;">
       <input id="buscaComprador" placeholder="Buscar por nome do comprador nesta sessão…" />
       <button class="btn ghost tiny" id="btnBuscar">Buscar</button>
@@ -545,6 +613,14 @@ async function renderPainel(){
   });
   document.getElementById('selSession').addEventListener('change', e=>{
     currentSessionId = e.target.value || null; renderPainel();
+  });
+  document.getElementById('btnImprimirLote').addEventListener('click', ()=>{
+    if(!currentSessionId){ showToast('Selecione uma sessão primeiro'); return; }
+    printAllTickets(currentSessionId);
+  });
+  document.getElementById('btnListaEspera').addEventListener('click', ()=>{
+    if(!currentSessionId){ showToast('Selecione uma sessão primeiro'); return; }
+    openWaitlistModal(currentSessionId);
   });
   document.getElementById('btnBuscar').addEventListener('click', doSearch);
   document.getElementById('buscaComprador').addEventListener('keydown', e=>{ if(e.key==='Enter') doSearch(); });
@@ -564,13 +640,76 @@ async function renderPainel(){
     const sum = computeSummary(seats);
     document.getElementById('summaryArea').innerHTML = `<div class="summary">
       <div class="stat"><b>${sum.livre}</b><span>Livres</span></div>
-      <div class="stat"><b>${sum.reservado}</b><span>Reservados</span></div>
       <div class="stat"><b>${sum.vendido}</b><span>Vendidos</span></div>
+      <div class="stat"><b>${sum.indisponivel}</b><span>Indisponíveis</span></div>
       <div class="stat"><b>${sum.alunos}</b><span>Alunos (não vendável)</span></div>
     </div>`;
     document.querySelectorAll('#mapArea .seat[data-seat]').forEach(el=>{
       el.addEventListener('click', ()=> openSeatModal(el.dataset.seat));
     });
+  });
+}
+
+async function openWaitlistModal(sessionId){
+  const found = findShowAndSession(sessionId);
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = `<div class="modal" style="max-width:420px;">
+    <h3>Lista de espera</h3>
+    <div class="sub">${found ? escapeHtml(found.show.name)+' — '+escapeHtml(sessionLabel(found.session)) : ''}</div>
+    <p class="note" style="margin-top:-8px;">Cada aluno tem direito a 4 ingressos. Se pedir mais, anote aqui quantos a mais ela quer, caso sobre.</p>
+    <div class="field"><label>Nome</label><input id="weNome" placeholder="Nome do aluno/responsável"/></div>
+    <div class="field"><label>Telefone</label><input id="weTel" placeholder="(00) 00000-0000"/></div>
+    <div class="field"><label>Quantos ingressos a mais quer</label><input id="weQtd" type="number" min="1" value="1"/></div>
+    <div class="field"><label>Observação</label><input id="weObs" placeholder="Opcional"/></div>
+    <button class="btn gold" id="btnAddWaitlist" style="width:100%; margin-bottom:16px;">+ Adicionar à lista</button>
+    <div id="waitlistItems"><div class="empty">Carregando…</div></div>
+    <div class="modal-actions" style="justify-content:flex-end;">
+      <button class="btn ghost" id="btnFecharWaitlist">Fechar</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#btnFecharWaitlist').addEventListener('click', ()=> overlay.remove());
+  overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
+
+  const itemsBox = overlay.querySelector('#waitlistItems');
+  async function refreshWaitlist(){
+    try{
+      const snap = await db.ref('waitlist/'+sessionId).once('value');
+      const val = snap.val() || {};
+      const entries = Object.entries(val).sort((a,b)=> a[1].at - b[1].at);
+      if(!entries.length){
+        itemsBox.innerHTML = '<div class="empty">Ninguém na lista de espera ainda.</div>';
+        return;
+      }
+      itemsBox.innerHTML = '<div class="found-list">' + entries.map(([key, e])=>
+        `<div class="found-item"><span><b>${escapeHtml(e.nome)}</b>${e.telefone?(' · '+escapeHtml(e.telefone)):''} — quer +${e.quantidade} ${e.obs?('· '+escapeHtml(e.obs)):''}</span><button class="btn danger tiny" data-remove-wait="${key}">Remover</button></div>`
+      ).join('') + '</div>';
+      itemsBox.querySelectorAll('[data-remove-wait]').forEach(btn=>{
+        btn.addEventListener('click', async ()=>{
+          await db.ref('waitlist/'+sessionId+'/'+btn.dataset.removeWait).remove();
+          refreshWaitlist();
+        });
+      });
+    }catch(e){
+      itemsBox.innerHTML = '<div class="empty">Erro ao carregar a lista de espera.</div>';
+    }
+  }
+  refreshWaitlist();
+
+  overlay.querySelector('#btnAddWaitlist').addEventListener('click', async ()=>{
+    const nome = overlay.querySelector('#weNome').value.trim();
+    const telefone = overlay.querySelector('#weTel').value.trim();
+    const quantidade = Math.max(1, parseInt(overlay.querySelector('#weQtd').value)||1);
+    const obs = overlay.querySelector('#weObs').value.trim();
+    if(!nome){ showToast('Preencha o nome'); return; }
+    await db.ref('waitlist/'+sessionId).push({ nome, telefone, quantidade, obs, at: Date.now(), by: currentUser?currentUser.email:'?' });
+    overlay.querySelector('#weNome').value = '';
+    overlay.querySelector('#weTel').value = '';
+    overlay.querySelector('#weQtd').value = '1';
+    overlay.querySelector('#weObs').value = '';
+    refreshWaitlist();
+    showToast('Adicionado à lista de espera');
   });
 }
 
@@ -598,14 +737,16 @@ async function openSeatModal(seatId){
     <div class="sub">${escapeHtml(show.name||'')} — ${escapeHtml(sessionLabel(session))}</div>
     <div class="status-choices">
       <label><input type="radio" name="st" value="livre" ${data.status==='livre'?'checked':''}><span>Livre</span></label>
-      <label><input type="radio" name="st" value="reservado" ${data.status==='reservado'?'checked':''}><span>Reservado</span></label>
       <label><input type="radio" name="st" value="vendido" ${data.status==='vendido'?'checked':''}><span>Vendido</span></label>
+      <label><input type="radio" name="st" value="indisponivel" ${data.status==='indisponivel'?'checked':''}><span>Indisponível</span></label>
     </div>
     <div class="field"><label>Nome do comprador</label><input id="fNome" value="${escapeHtml(data.nome)}" placeholder="Ex: Maria Silva"/></div>
     <div class="field"><label>Telefone</label><input id="fTel" value="${escapeHtml(data.telefone)}" placeholder="(00) 00000-0000"/></div>
     <div class="field"><label>E-mail (para enviar o ingresso)</label><input id="fEmail" type="email" value="${escapeHtml(data.email||'')}" placeholder="nome@exemplo.com"/></div>
     <div class="field"><label>Observação</label><textarea id="fObs" rows="2" placeholder="Combinado, forma de pagamento, etc.">${escapeHtml(data.obs)}</textarea></div>
-    ${data.status && data.status!=='livre' ? `<div class="ticket-actions">
+    <button class="btn ghost tiny" id="btnHistorico" type="button" style="margin-bottom:12px;">📜 Ver histórico deste assento</button>
+    <div id="historicoBox" style="display:none; margin-bottom:12px;"></div>
+    ${data.status==='vendido' ? `<div class="ticket-actions">
       <button class="btn ghost tiny" id="btnImprimir" type="button">🖨️ Imprimir ingresso</button>
       <button class="btn ghost tiny" id="btnEnviarEmail" type="button" ${data.email?'':'disabled title="Preencha e salve o e-mail primeiro"'}>✉️ Enviar por e-mail</button>
     </div>
@@ -665,6 +806,30 @@ async function openSeatModal(seatId){
       showToast(updated.checkin ? 'Entrada marcada' : 'Entrada desfeita');
     });
   }
+  overlay.querySelector('#btnHistorico').addEventListener('click', async ()=>{
+    const box = overlay.querySelector('#historicoBox');
+    if(box.style.display === 'none'){
+      box.style.display = 'block';
+      box.innerHTML = '<div class="empty">Carregando…</div>';
+      try{
+        const snap = await db.ref('history/'+currentSessionId+'/'+seatId).limitToLast(20).once('value');
+        const val = snap.val() || {};
+        const entries = Object.values(val).sort((a,b)=> b.at - a.at);
+        if(!entries.length){
+          box.innerHTML = '<div class="empty">Sem histórico ainda para este assento.</div>';
+        } else {
+          box.innerHTML = '<div class="found-list">' + entries.map(e=>{
+            const when = new Date(e.at).toLocaleString('pt-BR');
+            return `<div class="found-item"><span>${when} — ${escapeHtml(e.by||'?')}${e.nome?(' · '+escapeHtml(e.nome)):''}</span><span class="badge ${e.status}">${statusLabel(e.status)}</span></div>`;
+          }).join('') + '</div>';
+        }
+      }catch(err){
+        box.innerHTML = '<div class="empty">Erro ao carregar histórico.</div>';
+      }
+    } else {
+      box.style.display = 'none';
+    }
+  });
 }
 
 /* ---------- Ingresso (imprimir / e-mail) ---------- */
@@ -681,8 +846,11 @@ function findShowAndSession(sessionId){
 function buildTicketHtml({seatId, show, session, nome, status}){
   const code = ticketCode(currentSessionId, seatId);
   const qr = 'https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=' + encodeURIComponent('STUDIOA|'+code);
+  const bgStyle = show.backgroundImage
+    ? `style="background-image: linear-gradient(rgba(255,255,255,.85),rgba(255,255,255,.85)), url('${show.backgroundImage}'); background-size:cover; background-position:center;"`
+    : '';
   return `
-    <div class="ticket">
+    <div class="ticket" ${bgStyle}>
       <img class="ticket-logo" src="${document.querySelector('.brand img').src}" alt="Studio A"/>
       <h2>Studio A</h2>
       <p class="ticket-show">${escapeHtml(show.name||'')}</p>
@@ -691,12 +859,25 @@ function buildTicketHtml({seatId, show, session, nome, status}){
       <p class="ticket-name">${escapeHtml(nome||'')}</p>
       <img class="ticket-qr" src="${qr}" alt="QR"/>
       <p class="ticket-code">${code.toUpperCase()}</p>
-      <p class="ticket-status">${status==='vendido' ? 'PAGO' : 'RESERVADO'}</p>
+      <p class="ticket-status">PAGO</p>
     </div>`;
 }
 function printTicket(info){
   const holder = document.getElementById('printArea');
   holder.innerHTML = buildTicketHtml(info);
+  window.print();
+}
+function printAllTickets(sessionId){
+  const seats = SEATS_CACHE[sessionId] || {};
+  const entries = Object.entries(seats).filter(([id,d]) => d.status==='vendido');
+  if(!entries.length){ showToast('Nenhum ingresso vendido nesta sessão ainda'); return; }
+  entries.sort((a,b)=> a[0].localeCompare(b[0]));
+  const found = findShowAndSession(sessionId);
+  if(!found){ showToast('Sessão não encontrada'); return; }
+  const holder = document.getElementById('printArea');
+  holder.innerHTML = entries.map(([seatId, data]) =>
+    buildTicketHtml({ seatId, show: found.show, session: found.session, nome: data.nome, status: data.status })
+  ).join('');
   window.print();
 }
 async function sendTicketEmail(info){
@@ -714,7 +895,7 @@ async function sendTicketEmail(info){
       session_label: sessionLabel(info.session),
       seat_id: info.seatId,
       ticket_code: code,
-      status_label: info.status==='vendido' ? 'Pago' : 'Reservado'
+      status_label: 'Pago'
     });
     showToast('E-mail enviado para ' + info.email);
   }catch(e){
@@ -724,11 +905,13 @@ async function sendTicketEmail(info){
 
 /* ---------- Site Público ---------- */
 async function renderPublico(){
+  stopCountdown();
   const content = document.getElementById('content');
   content.innerHTML = `<div class="panel">
     <h2>Consulta de Disponibilidade</h2>
     <p class="note" style="margin:-6px 0 14px;">Escolha o espetáculo e a sessão para ver os lugares livres. Para reservar, entre em contato com a organização.</p>
     ${showSessionSelector()}
+    <div id="countdownArea" class="countdown"></div>
     <div id="mapArea"><div class="empty">Carregando…</div></div>
     <div id="summaryArea"></div>
   </div>`;
@@ -743,6 +926,14 @@ async function renderPublico(){
     document.getElementById('mapArea').innerHTML = '<div class="empty">Nenhuma sessão disponível no momento.</div>';
     return;
   }
+  const foundNow = findShowAndSession(currentSessionId);
+  const updateCountdown = ()=>{
+    const el = document.getElementById('countdownArea');
+    if(!el) return;
+    el.textContent = foundNow ? (formatCountdown(foundNow.session) || '') : '';
+  };
+  updateCountdown();
+  countdownTimer = setInterval(updateCountdown, 60000);
   attachLiveSeats(currentSessionId, (seats)=>{
     if(currentTab!=='publico') return;
     const mapArea = document.getElementById('mapArea');
@@ -810,6 +1001,13 @@ function renderConfig(){
         <input value="${escapeHtml(show.name)}" class="showNameInput"/>
         <button class="btn danger tiny" data-remove-show="${show.id}">Remover</button>
       </div>
+      <div class="bg-upload-row">
+        ${show.backgroundImage ? `<img class="bg-preview" src="${show.backgroundImage}" alt=""/>` : `<div class="bg-preview empty-bg">sem imagem</div>`}
+        <div class="bg-upload-actions">
+          <label class="btn ghost tiny bg-upload-label">📷 ${show.backgroundImage ? 'Trocar imagem do ingresso' : 'Upar imagem do ingresso'}<input type="file" accept="image/*" class="bgFileInput" style="display:none;"/></label>
+          ${show.backgroundImage ? `<button class="btn danger tiny" data-remove-bg="1" type="button">Remover imagem</button>` : ''}
+        </div>
+      </div>
       <div class="sessionsWrap"></div>
       <button class="btn ghost tiny" data-add-session="${show.id}">+ Adicionar sessão</button>`;
     list.appendChild(card);
@@ -843,6 +1041,27 @@ function renderConfig(){
       show.sessions.push({ id: uid('s'), date:'', time:'' });
       await saveConfig(); renderConfig();
     });
+    const bgInput = card.querySelector('.bgFileInput');
+    bgInput.addEventListener('change', async (e)=>{
+      const file = e.target.files[0];
+      if(!file) return;
+      try{
+        const dataUrl = await resizeImageToDataUrl(file, 900, 500);
+        show.backgroundImage = dataUrl;
+        await saveConfig();
+        renderConfig();
+      }catch(err){
+        showToast('Não consegui processar essa imagem');
+      }
+    });
+    const removeBgBtn = card.querySelector('[data-remove-bg]');
+    if(removeBgBtn){
+      removeBgBtn.addEventListener('click', async ()=>{
+        delete show.backgroundImage;
+        await saveConfig();
+        renderConfig();
+      });
+    }
   });
 
   document.getElementById('btnAddShow').addEventListener('click', async ()=>{
@@ -963,8 +1182,8 @@ async function handleScannedText(text){
     seat = snap.val();
   }catch(e){ seat = null; }
 
-  if(!seat || seat.status==='livre'){
-    resultBox.innerHTML = `<div class="scan-banner invalid">❌ Assento ${seatId} não consta como vendido/reservado</div>`;
+  if(!seat || seat.status!=='vendido'){
+    resultBox.innerHTML = `<div class="scan-banner invalid">❌ Assento ${seatId} não consta como vendido</div>`;
     addCheckinLog(seatId, found, null, 'invalido');
     return;
   }
@@ -986,13 +1205,14 @@ function addCheckinLog(seatId, found, seat, kind){
   if(!log) return;
   checkinLogEntries.unshift({ time: new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}), seatId, showName: found.show.name, nome: seat ? seat.nome : '', kind });
   log.innerHTML = '<div class="found-list">' + checkinLogEntries.slice(0,15).map(e=>
-    `<div class="found-item"><span>${e.time} — Assento <b>${e.seatId}</b> — ${escapeHtml(e.nome||'—')} (${escapeHtml(e.showName)})</span><span class="badge ${e.kind==='ok'?'vendido':'reservado'}">${e.kind==='ok'?'entrou':e.kind==='repetido'?'repetido':'inválido'}</span></div>`
+    `<div class="found-item"><span>${e.time} — Assento <b>${e.seatId}</b> — ${escapeHtml(e.nome||'—')} (${escapeHtml(e.showName)})</span><span class="badge ${e.kind==='ok'?'vendido':'indisponivel'}">${e.kind==='ok'?'entrou':e.kind==='repetido'?'repetido':'inválido'}</span></div>`
   ).join('') + '</div>';
 }
 
 
 function switchTab(tab){
   if(currentTab==='checkin' && tab!=='checkin'){ stopScanner(); }
+  if(currentTab==='publico' && tab!=='publico'){ stopCountdown(); }
   currentTab = tab;
   document.querySelectorAll('nav.tabs button').forEach(b=> b.classList.toggle('active', b.dataset.tab===tab));
   if(tab==='painel') renderPainel();
