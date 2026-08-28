@@ -140,9 +140,9 @@
 
   .print-only{display:none;}
   @media print{
-    body *{visibility:hidden;}
-    .print-only, .print-only *{visibility:visible;}
-    .print-only{display:block; position:static; background:#fff;}
+    * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
+    body > *:not(#printArea){ display:none !important; }
+    #printArea{ display:block !important; background:#fff; margin:0; padding:0; }
     .ticket{
       width:320px; margin:40px auto; text-align:center; font-family:'Work Sans', sans-serif;
       border:2px dashed #000; border-radius:14px; padding:24px; color:#000;
@@ -862,12 +862,25 @@ function buildTicketHtml({seatId, show, session, nome, status}){
       <p class="ticket-status">PAGO</p>
     </div>`;
 }
-function printTicket(info){
+function waitForImages(container, timeout){
+  const imgs = Array.from(container.querySelectorAll('img'));
+  if(!imgs.length) return Promise.resolve();
+  const loaders = imgs.map(img=>{
+    if(img.complete && img.naturalWidth > 0) return Promise.resolve();
+    return new Promise(resolve=>{
+      img.addEventListener('load', resolve, {once:true});
+      img.addEventListener('error', resolve, {once:true});
+    });
+  });
+  return Promise.race([Promise.all(loaders), new Promise(r=>setTimeout(r, timeout || 2500))]);
+}
+async function printTicket(info){
   const holder = document.getElementById('printArea');
   holder.innerHTML = buildTicketHtml(info);
+  await waitForImages(holder);
   window.print();
 }
-function printAllTickets(sessionId){
+async function printAllTickets(sessionId){
   const seats = SEATS_CACHE[sessionId] || {};
   const entries = Object.entries(seats).filter(([id,d]) => d.status==='vendido');
   if(!entries.length){ showToast('Nenhum ingresso vendido nesta sessão ainda'); return; }
@@ -878,6 +891,7 @@ function printAllTickets(sessionId){
   holder.innerHTML = entries.map(([seatId, data]) =>
     buildTicketHtml({ seatId, show: found.show, session: found.session, nome: data.nome, status: data.status })
   ).join('');
+  await waitForImages(holder, 4000);
   window.print();
 }
 async function sendTicketEmail(info){
