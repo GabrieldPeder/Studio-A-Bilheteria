@@ -107,9 +107,13 @@
   .seat.vendido{background:var(--seat-sold);}
   .seat.aluno{
     background: repeating-linear-gradient(45deg, var(--seat-aluno), var(--seat-aluno) 3px, #14111a 3px, #14111a 6px);
-    cursor:default; border-color:rgba(255,255,255,.08);
+    border-color:rgba(255,255,255,.08);
   }
   .seat.readonly{cursor:default;}
+  .price-tag{background:rgba(228,19,111,.15); color:var(--pink-soft); padding:8px 12px; border-radius:8px; font-weight:700; text-align:center; margin-bottom:14px; font-size:13.5px;}
+  .price-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(90px,1fr)); gap:8px; margin-top:8px;}
+  .price-field label{font-size:10px;}
+  .price-field input{width:100%;}
 
   .legend{display:flex; gap:16px; flex-wrap:wrap; justify-content:center; margin-top:6px;}
   .legend .item{display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--muted);}
@@ -140,6 +144,7 @@
 
   .print-only{display:none;}
   @media print{
+    html, body{ background:#fff !important; }
     * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
     body > *:not(#printArea){ display:none !important; }
     #printArea{ display:block !important; background:#fff; margin:0; padding:0; }
@@ -379,6 +384,7 @@ const DEFAULT_CONFIG = {
   seatsLeft: 9,
   seatsCenter: 8,
   seatsRight: 8,
+  prices: {},
   shows: [
     { id: 'show1', name: 'Rei o Show', sessions: [ { id: 's1_1', date: '', time: '' } ] },
     { id: 'show2', name: 'Frozen', sessions: [ { id: 's2_1', date: '', time: '' } ] },
@@ -429,6 +435,7 @@ async function loadConfig(){
     await saveConfig();
   }
   if(!CONFIG.shows) CONFIG.shows = [];
+  if(!CONFIG.prices) CONFIG.prices = {};
   if(!currentShowId && CONFIG.shows.length) currentShowId = CONFIG.shows[0].id;
   syncCurrentSession();
 }
@@ -488,6 +495,17 @@ function blockOf(n){
   if(n <= CONFIG.seatsLeft + CONFIG.seatsCenter) return 'center';
   return 'right';
 }
+function seatColumn(seatId){
+  const m = seatId.match(/\d+$/);
+  return m ? parseInt(m[0], 10) : 1;
+}
+function seatRowLetter(seatId){
+  const m = seatId.match(/^[A-Z]+/);
+  return m ? m[0] : '';
+}
+function defaultStatusFor(seatId){
+  return blockOf(seatColumn(seatId)) === 'right' ? 'aluno' : 'livre';
+}
 
 function renderSeatMap(seats, readonly){
   const width = rowWidth();
@@ -496,15 +514,11 @@ function renderSeatMap(seats, readonly){
     html += `<div class="seat-row"><div class="row-label">${rowLetter(r)}</div>`;
     for(let n=1;n<=width;n++){
       const id = rowLetter(r)+n;
-      const block = blockOf(n);
-      if(block==='right'){
-        html += `<div class="seat aluno" title="Reservado — alunos"></div>`;
-      } else {
-        const st = seats[id] ? seats[id].status : 'livre';
-        const cls = st==='livre' ? '' : st;
-        const mark = st==='indisponivel' ? '✕' : '';
-        html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${id}">${mark}</div>`;
-      }
+      const st = seats[id] ? seats[id].status : defaultStatusFor(id);
+      const cls = st==='livre' ? '' : st;
+      const mark = st==='indisponivel' ? '✕' : '';
+      const title = st==='aluno' ? id+' — reservado para alunos' : id;
+      html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${title}">${mark}</div>`;
       if(n === CONFIG.seatsLeft || n === CONFIG.seatsLeft + CONFIG.seatsCenter){
         html += `<div class="seat aisle-gap"></div>`;
       }
@@ -522,15 +536,30 @@ function renderSeatMap(seats, readonly){
 }
 
 function computeSummary(seats){
-  const sellable = CONFIG.rows * (CONFIG.seatsLeft + CONFIG.seatsCenter);
-  const alunos = CONFIG.rows * CONFIG.seatsRight;
-  let indisponivel=0, vendido=0;
-  Object.values(seats).forEach(s=>{
-    if(s.status==='indisponivel') indisponivel++;
-    if(s.status==='vendido') vendido++;
-  });
-  const livre = sellable - indisponivel - vendido;
+  let livre=0, vendido=0, indisponivel=0, alunos=0;
+  const width = rowWidth();
+  for(let r=0;r<CONFIG.rows;r++){
+    for(let n=1;n<=width;n++){
+      const id = rowLetter(r)+n;
+      const st = seats[id] ? seats[id].status : defaultStatusFor(id);
+      if(st==='vendido') vendido++;
+      else if(st==='indisponivel') indisponivel++;
+      else if(st==='aluno') alunos++;
+      else livre++;
+    }
+  }
+  const sellable = livre + vendido + indisponivel;
   return {sellable, livre, indisponivel, vendido, alunos};
+}
+
+function renderPriceInputs(){
+  let html = '';
+  for(let r=0;r<CONFIG.rows;r++){
+    const letter = rowLetter(r);
+    const val = (CONFIG.prices && CONFIG.prices[letter]!=null) ? CONFIG.prices[letter] : '';
+    html += `<div class="price-field"><label>Fileira ${letter}</label><input type="number" min="0" step="0.01" class="priceInput" data-row="${letter}" value="${val}" placeholder="0,00"/></div>`;
+  }
+  return html;
 }
 
 function sessionLabel(session){
@@ -727,18 +756,22 @@ async function doSearch(){
 
 async function openSeatModal(seatId){
   const seats = SEATS_CACHE[currentSessionId] || {};
-  const data = seats[seatId] || { status:'livre', nome:'', telefone:'', obs:'' };
+  const data = seats[seatId] || { status: defaultStatusFor(seatId), nome:'', telefone:'', obs:'' };
   const show = CONFIG.shows.find(s=>s.id===currentShowId) || {sessions:[]};
   const session = show.sessions.find(se=>se.id===currentSessionId) || {};
+  const rowL = seatRowLetter(seatId);
+  const price = (CONFIG.prices && CONFIG.prices[rowL]!=null) ? CONFIG.prices[rowL] : null;
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
   overlay.innerHTML = `<div class="modal">
     <h3>Assento ${seatId}</h3>
     <div class="sub">${escapeHtml(show.name||'')} — ${escapeHtml(sessionLabel(session))}</div>
+    <div class="price-tag">${price!=null ? '💰 Valor desta fileira: R$ '+price.toFixed(2).replace('.',',') : '⚠️ Preço não definido para a fileira '+rowL+' (defina em Configurações)'}</div>
     <div class="status-choices">
       <label><input type="radio" name="st" value="livre" ${data.status==='livre'?'checked':''}><span>Livre</span></label>
       <label><input type="radio" name="st" value="vendido" ${data.status==='vendido'?'checked':''}><span>Vendido</span></label>
       <label><input type="radio" name="st" value="indisponivel" ${data.status==='indisponivel'?'checked':''}><span>Indisponível</span></label>
+      <label><input type="radio" name="st" value="aluno" ${data.status==='aluno'?'checked':''}><span>Aluno</span></label>
     </div>
     <div class="field"><label>Nome do comprador</label><input id="fNome" value="${escapeHtml(data.nome)}" placeholder="Ex: Maria Silva"/></div>
     <div class="field"><label>Telefone</label><input id="fTel" value="${escapeHtml(data.telefone)}" placeholder="(00) 00000-0000"/></div>
@@ -777,7 +810,7 @@ async function openSeatModal(seatId){
     const telefone = overlay.querySelector('#fTel').value.trim();
     const email = overlay.querySelector('#fEmail').value.trim();
     const obs = overlay.querySelector('#fObs').value.trim();
-    if(status==='livre'){
+    if(status === defaultStatusFor(seatId)){
       await saveSeat(currentSessionId, seatId, null);
     } else {
       await saveSeat(currentSessionId, seatId, { status, nome, telefone, email, obs });
@@ -974,15 +1007,18 @@ function renderConfig(){
 
   <div class="panel">
     <h2>Configurações da sala</h2>
-    <p class="note" style="margin-top:-8px;">O palco fica de frente para o público. Da esquerda para a direita: <b>Esquerda</b> · <b>Centro</b> · <b>Direita (alunos, não vendável)</b>.</p>
+    <p class="note" style="margin-top:-8px;">O palco fica de frente para o público. Da esquerda para a direita: <b>Esquerda</b> · <b>Centro</b> · <b>Direita (reservado para alunos por padrão — dá pra liberar assento por assento no Painel)</b>.</p>
     <div class="row" style="margin-top:12px;">
       <div class="field"><label>Fileiras</label><input id="cfgRows" type="number" min="1" max="26" value="${CONFIG.rows}"/></div>
       <div class="field"><label>Assentos — Esquerda</label><input id="cfgLeft" type="number" min="0" value="${CONFIG.seatsLeft}"/></div>
       <div class="field"><label>Assentos — Centro</label><input id="cfgCenter" type="number" min="0" value="${CONFIG.seatsCenter}"/></div>
       <div class="field"><label>Assentos — Direita (alunos)</label><input id="cfgRight" type="number" min="0" value="${CONFIG.seatsRight}"/></div>
     </div>
-    <p class="note">Total por fileira: ${CONFIG.seatsLeft+CONFIG.seatsCenter+CONFIG.seatsRight} · Total da sala: ${CONFIG.rows*(CONFIG.seatsLeft+CONFIG.seatsCenter+CONFIG.seatsRight)} lugares (${CONFIG.rows*(CONFIG.seatsLeft+CONFIG.seatsCenter)} à venda + ${CONFIG.rows*CONFIG.seatsRight} para alunos).</p>
-    <button class="btn gold" id="btnSalvarSala" style="margin-top:6px;">Salvar sala</button>
+    <p class="note">Total por fileira: ${CONFIG.seatsLeft+CONFIG.seatsCenter+CONFIG.seatsRight} · Total da sala: ${CONFIG.rows*(CONFIG.seatsLeft+CONFIG.seatsCenter+CONFIG.seatsRight)} lugares (${CONFIG.rows*(CONFIG.seatsLeft+CONFIG.seatsCenter)} à venda + ${CONFIG.rows*CONFIG.seatsRight} para alunos por padrão).</p>
+    <hr style="border:none; border-top:1px solid var(--line); margin:16px 0;"/>
+    <label style="margin-bottom:8px;">Preço por fileira (R$)</label>
+    <div class="price-grid">${renderPriceInputs()}</div>
+    <button class="btn gold" id="btnSalvarSala" style="margin-top:14px;">Salvar sala e preços</button>
   </div>
 
   <div class="panel">
@@ -1002,8 +1038,14 @@ function renderConfig(){
     CONFIG.seatsLeft = Math.max(0, parseInt(document.getElementById('cfgLeft').value)||0);
     CONFIG.seatsCenter = Math.max(0, parseInt(document.getElementById('cfgCenter').value)||0);
     CONFIG.seatsRight = Math.max(0, parseInt(document.getElementById('cfgRight').value)||0);
+    CONFIG.prices = CONFIG.prices || {};
+    document.querySelectorAll('.priceInput').forEach(inp=>{
+      const v = parseFloat(inp.value.replace(',','.'));
+      if(!isNaN(v)) CONFIG.prices[inp.dataset.row] = v;
+      else delete CONFIG.prices[inp.dataset.row];
+    });
     await saveConfig();
-    showToast('Sala atualizada');
+    showToast('Sala e preços atualizados');
     renderConfig();
   });
 
