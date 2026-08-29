@@ -110,10 +110,12 @@
     border-color:rgba(255,255,255,.08);
   }
   .seat.readonly{cursor:default;}
+  .seat.selected{outline:3px solid #fff; outline-offset:1px; box-shadow:0 0 0 5px var(--pink);}
+  .sel-toolbar{display:flex; align-items:center; gap:10px; flex-wrap:wrap; background:var(--bg-panel-2); border:1px solid var(--line); border-radius:10px; padding:10px 12px; margin-top:10px; font-size:13px;}
   .price-tag{background:rgba(228,19,111,.15); color:var(--pink-soft); padding:8px 12px; border-radius:8px; font-weight:700; text-align:center; margin-bottom:14px; font-size:13.5px;}
-  .price-grid{display:grid; grid-template-columns:repeat(auto-fill,minmax(90px,1fr)); gap:8px; margin-top:8px;}
-  .price-field label{font-size:10px;}
-  .price-field input{width:100%;}
+  .price-map .seat{cursor:pointer; font-size:9px; color:var(--cream); background:var(--seat-free); display:flex; align-items:center; justify-content:center;}
+  .price-map .seat.no-price{background:var(--bg-panel-2); color:var(--muted);}
+  .price-map .seat.selected{outline:2px solid var(--pink); outline-offset:1px;}
 
   .legend{display:flex; gap:16px; flex-wrap:wrap; justify-content:center; margin-top:6px;}
   .legend .item{display:flex; align-items:center; gap:7px; font-size:12.5px; color:var(--muted);}
@@ -147,21 +149,24 @@
     html, body{ background:#fff !important; }
     * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; color-adjust: exact !important; }
     body > *:not(#printArea){ display:none !important; }
-    #printArea{ display:block !important; background:#fff; margin:0; padding:0; }
-    .ticket{
-      width:320px; margin:40px auto; text-align:center; font-family:'Work Sans', sans-serif;
-      border:2px dashed #000; border-radius:14px; padding:24px; color:#000;
+    #printArea{
+      display:flex !important; flex-wrap:wrap; align-content:flex-start; justify-content:center;
+      gap:14px; background:#fff; margin:0; padding:10px;
     }
-    .ticket + .ticket{ page-break-before: always; }
-    .ticket-logo{width:64px; height:64px; border-radius:12px; margin-bottom:8px;}
-    .ticket h2{font-family:'Cormorant Garamond', serif; margin:4px 0; font-size:24px;}
-    .ticket-show{font-weight:700; font-size:16px; margin:6px 0 2px;}
-    .ticket-session{color:#444; font-size:13px; margin:0 0 10px;}
-    .ticket-seat{font-size:20px; margin:10px 0 4px;}
-    .ticket-name{font-size:14px; margin:0 0 10px;}
-    .ticket-qr{width:120px; height:120px; margin:10px auto;}
-    .ticket-code{letter-spacing:.1em; font-size:12px; color:#666;}
-    .ticket-status{display:inline-block; margin-top:10px; padding:4px 14px; border:1px solid #000; border-radius:20px; font-size:11px; font-weight:700; letter-spacing:.05em;}
+    .ticket{
+      width:250px; margin:0; text-align:center; font-family:'Work Sans', sans-serif;
+      border:2px dashed #000; border-radius:14px; padding:16px; color:#000;
+      break-inside:avoid; page-break-inside:avoid;
+    }
+    .ticket-logo{width:52px; height:52px; border-radius:10px; margin-bottom:6px;}
+    .ticket h2{font-family:'Cormorant Garamond', serif; margin:3px 0; font-size:19px;}
+    .ticket-show{font-weight:700; font-size:13.5px; margin:5px 0 2px;}
+    .ticket-session{color:#444; font-size:11px; margin:0 0 8px;}
+    .ticket-seat{font-size:16px; margin:8px 0 3px;}
+    .ticket-name{font-size:12px; margin:0 0 8px;}
+    .ticket-qr{width:96px; height:96px; margin:8px auto;}
+    .ticket-code{letter-spacing:.1em; font-size:10px; color:#666;}
+    .ticket-status{display:inline-block; margin-top:8px; padding:3px 12px; border:1px solid #000; border-radius:20px; font-size:10px; font-weight:700; letter-spacing:.05em;}
   }
 
   .show-card{background:var(--bg-panel-2); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:12px;}
@@ -354,6 +359,8 @@ if(EMAILJS_READY && window.emailjs){ emailjs.init(emailjsConfig.publicKey); }
 let CONFIG = null;
 let SEATS_CACHE = {};
 let currentTab = 'publico';
+let selectionMode = false;
+let selectedSeats = new Set();
 let currentShowId = null;
 let currentSessionId = null;
 let liveSeatsRef = null;
@@ -552,14 +559,40 @@ function computeSummary(seats){
   return {sellable, livre, indisponivel, vendido, alunos};
 }
 
-function renderPriceInputs(){
-  let html = '';
+let priceSelectedSeats = new Set();
+function renderPriceMap(){
+  const width = rowWidth();
+  let html = '<div class="seatmap price-map">';
   for(let r=0;r<CONFIG.rows;r++){
-    const letter = rowLetter(r);
-    const val = (CONFIG.prices && CONFIG.prices[letter]!=null) ? CONFIG.prices[letter] : '';
-    html += `<div class="price-field"><label>Fileira ${letter}</label><input type="number" min="0" step="0.01" class="priceInput" data-row="${letter}" value="${val}" placeholder="0,00"/></div>`;
+    html += `<div class="seat-row"><div class="row-label">${rowLetter(r)}</div>`;
+    for(let n=1;n<=width;n++){
+      const id = rowLetter(r)+n;
+      const price = (CONFIG.prices && CONFIG.prices[id]!=null) ? CONFIG.prices[id] : null;
+      const sel = priceSelectedSeats.has(id) ? 'selected' : '';
+      const noPrice = price==null ? 'no-price' : '';
+      html += `<div class="seat price-seat ${sel} ${noPrice}" data-price-seat="${id}" title="${id}">${price!=null ? Math.round(price) : ''}</div>`;
+      if(n === CONFIG.seatsLeft || n === CONFIG.seatsLeft + CONFIG.seatsCenter){
+        html += `<div class="seat aisle-gap"></div>`;
+      }
+    }
+    html += `</div>`;
   }
+  html += '</div>';
   return html;
+}
+function attachPriceMapHandlers(){
+  document.querySelectorAll('.price-seat').forEach(el=>{
+    el.addEventListener('click', ()=>{
+      const id = el.dataset.priceSeat;
+      if(priceSelectedSeats.has(id)){ priceSelectedSeats.delete(id); el.classList.remove('selected'); }
+      else { priceSelectedSeats.add(id); el.classList.add('selected'); }
+      updatePriceSelCount();
+    });
+  });
+}
+function updatePriceSelCount(){
+  const el = document.getElementById('priceSelCount');
+  if(el) el.textContent = priceSelectedSeats.size + ' assento(s) selecionado(s)';
 }
 
 function sessionLabel(session){
@@ -627,7 +660,9 @@ async function renderPainel(){
     <div class="row" style="margin-top:8px;">
       <button class="btn ghost tiny" id="btnImprimirLote" type="button">🖨️ Imprimir ingressos vendidos desta sessão</button>
       <button class="btn ghost tiny" id="btnListaEspera" type="button">📋 Lista de espera</button>
+      <button class="btn ${selectionMode?'gold':'ghost'} tiny" id="btnToggleSelection" type="button">☑️ ${selectionMode ? 'Sair da seleção múltipla' : 'Selecionar vários assentos'}</button>
     </div>
+    <div id="selectionToolbar"></div>
     <div class="search-box" style="margin-top:14px;">
       <input id="buscaComprador" placeholder="Buscar por nome do comprador nesta sessão…" />
       <button class="btn ghost tiny" id="btnBuscar">Buscar</button>
@@ -638,10 +673,10 @@ async function renderPainel(){
   </div>`;
 
   document.getElementById('selShow').addEventListener('change', e=>{
-    currentShowId = e.target.value; syncCurrentSession(); renderPainel();
+    currentShowId = e.target.value; syncCurrentSession(); selectedSeats.clear(); renderPainel();
   });
   document.getElementById('selSession').addEventListener('change', e=>{
-    currentSessionId = e.target.value || null; renderPainel();
+    currentSessionId = e.target.value || null; selectedSeats.clear(); renderPainel();
   });
   document.getElementById('btnImprimirLote').addEventListener('click', ()=>{
     if(!currentSessionId){ showToast('Selecione uma sessão primeiro'); return; }
@@ -651,8 +686,14 @@ async function renderPainel(){
     if(!currentSessionId){ showToast('Selecione uma sessão primeiro'); return; }
     openWaitlistModal(currentSessionId);
   });
+  document.getElementById('btnToggleSelection').addEventListener('click', ()=>{
+    selectionMode = !selectionMode;
+    if(!selectionMode) selectedSeats.clear();
+    renderPainel();
+  });
   document.getElementById('btnBuscar').addEventListener('click', doSearch);
   document.getElementById('buscaComprador').addEventListener('keydown', e=>{ if(e.key==='Enter') doSearch(); });
+  renderSelectionToolbar();
 
   if(!currentSessionId){
     detachLiveSeats();
@@ -674,8 +715,77 @@ async function renderPainel(){
       <div class="stat"><b>${sum.alunos}</b><span>Alunos (não vendável)</span></div>
     </div>`;
     document.querySelectorAll('#mapArea .seat[data-seat]').forEach(el=>{
-      el.addEventListener('click', ()=> openSeatModal(el.dataset.seat));
+      const id = el.dataset.seat;
+      if(selectionMode && selectedSeats.has(id)) el.classList.add('selected');
+      el.addEventListener('click', ()=>{
+        if(selectionMode){
+          if(selectedSeats.has(id)){ selectedSeats.delete(id); el.classList.remove('selected'); }
+          else { selectedSeats.add(id); el.classList.add('selected'); }
+          renderSelectionToolbar();
+        } else {
+          openSeatModal(id);
+        }
+      });
     });
+  });
+}
+
+function renderSelectionToolbar(){
+  const box = document.getElementById('selectionToolbar');
+  if(!box) return;
+  if(!selectionMode){ box.innerHTML = ''; return; }
+  box.innerHTML = `<div class="sel-toolbar">
+    <span>${selectedSeats.size} assento(s) selecionado(s)</span>
+    <button class="btn gold tiny" id="btnBulkVender" type="button" ${selectedSeats.size?'':'disabled'}>Marcar todos como Vendido</button>
+    <button class="btn ghost tiny" id="btnBulkImprimir" type="button" ${selectedSeats.size?'':'disabled'}>🖨️ Imprimir selecionados</button>
+    <button class="btn ghost tiny" id="btnBulkLimpar" type="button">Limpar seleção</button>
+  </div>`;
+  const btnVender = document.getElementById('btnBulkVender');
+  if(btnVender) btnVender.addEventListener('click', openBulkSellModal);
+  const btnImprimir = document.getElementById('btnBulkImprimir');
+  if(btnImprimir) btnImprimir.addEventListener('click', ()=>{
+    printSelectedTickets(currentSessionId, Array.from(selectedSeats));
+  });
+  const btnLimpar = document.getElementById('btnBulkLimpar');
+  if(btnLimpar) btnLimpar.addEventListener('click', ()=>{
+    selectedSeats.clear();
+    renderPainel();
+  });
+}
+
+function openBulkSellModal(){
+  if(!selectedSeats.size) return;
+  const ids = Array.from(selectedSeats).sort();
+  const overlay = document.createElement('div');
+  overlay.className = 'overlay';
+  overlay.innerHTML = `<div class="modal">
+    <h3>Vender ${ids.length} assentos</h3>
+    <div class="sub">Assentos: ${ids.join(', ')}</div>
+    <p class="note" style="margin-top:-4px;">Preencha uma vez — os dados serão aplicados aos ${ids.length} assentos selecionados (mesmo comprador).</p>
+    <div class="field"><label>Nome do comprador</label><input id="bsNome" placeholder="Ex: Maria Silva"/></div>
+    <div class="field"><label>Telefone</label><input id="bsTel" placeholder="(00) 00000-0000"/></div>
+    <div class="field"><label>E-mail (para enviar o ingresso)</label><input id="bsEmail" type="email" placeholder="nome@exemplo.com"/></div>
+    <div class="field"><label>Observação</label><textarea id="bsObs" rows="2" placeholder="Combinado, forma de pagamento, etc."></textarea></div>
+    <div class="modal-actions" style="justify-content:flex-end;">
+      <button class="btn ghost" id="bsCancelar">Cancelar</button>
+      <button class="btn gold" id="bsSalvar">Marcar como vendido</button>
+    </div>
+  </div>`;
+  document.body.appendChild(overlay);
+  overlay.querySelector('#bsCancelar').addEventListener('click', ()=> overlay.remove());
+  overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
+  overlay.querySelector('#bsSalvar').addEventListener('click', async ()=>{
+    const nome = overlay.querySelector('#bsNome').value.trim();
+    const telefone = overlay.querySelector('#bsTel').value.trim();
+    const email = overlay.querySelector('#bsEmail').value.trim();
+    const obs = overlay.querySelector('#bsObs').value.trim();
+    for(const id of ids){
+      await saveSeat(currentSessionId, id, { status:'vendido', nome, telefone, email, obs });
+    }
+    overlay.remove();
+    selectedSeats.clear();
+    showToast(ids.length + ' assentos marcados como vendidos');
+    renderPainel();
   });
 }
 
@@ -759,14 +869,13 @@ async function openSeatModal(seatId){
   const data = seats[seatId] || { status: defaultStatusFor(seatId), nome:'', telefone:'', obs:'' };
   const show = CONFIG.shows.find(s=>s.id===currentShowId) || {sessions:[]};
   const session = show.sessions.find(se=>se.id===currentSessionId) || {};
-  const rowL = seatRowLetter(seatId);
-  const price = (CONFIG.prices && CONFIG.prices[rowL]!=null) ? CONFIG.prices[rowL] : null;
+  const price = (CONFIG.prices && CONFIG.prices[seatId]!=null) ? CONFIG.prices[seatId] : null;
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
   overlay.innerHTML = `<div class="modal">
     <h3>Assento ${seatId}</h3>
     <div class="sub">${escapeHtml(show.name||'')} — ${escapeHtml(sessionLabel(session))}</div>
-    <div class="price-tag">${price!=null ? '💰 Valor desta fileira: R$ '+price.toFixed(2).replace('.',',') : '⚠️ Preço não definido para a fileira '+rowL+' (defina em Configurações)'}</div>
+    <div class="price-tag">${price!=null ? '💰 Valor deste assento: R$ '+price.toFixed(2).replace('.',',') : '⚠️ Preço não definido para o assento '+seatId+' (defina em Configurações)'}</div>
     <div class="status-choices">
       <label><input type="radio" name="st" value="livre" ${data.status==='livre'?'checked':''}><span>Livre</span></label>
       <label><input type="radio" name="st" value="vendido" ${data.status==='vendido'?'checked':''}><span>Vendido</span></label>
@@ -927,6 +1036,22 @@ async function printAllTickets(sessionId){
   await waitForImages(holder, 4000);
   window.print();
 }
+async function printSelectedTickets(sessionId, ids){
+  const seats = SEATS_CACHE[sessionId] || {};
+  const entries = ids.map(id=>[id, seats[id]]).filter(([id,d]) => d && d.status==='vendido');
+  const skipped = ids.length - entries.length;
+  if(!entries.length){ showToast('Nenhum dos assentos selecionados está marcado como vendido'); return; }
+  entries.sort((a,b)=> a[0].localeCompare(b[0]));
+  const found = findShowAndSession(sessionId);
+  if(!found){ showToast('Sessão não encontrada'); return; }
+  const holder = document.getElementById('printArea');
+  holder.innerHTML = entries.map(([seatId, data]) =>
+    buildTicketHtml({ seatId, show: found.show, session: found.session, nome: data.nome, status: data.status })
+  ).join('');
+  await waitForImages(holder, 4000);
+  window.print();
+  if(skipped>0) showToast(skipped + ' assento(s) ignorado(s) por não estarem vendidos');
+}
 async function sendTicketEmail(info){
   if(!EMAILJS_READY){
     showToast('Configure o EmailJS primeiro (veja instruções no arquivo)');
@@ -1015,10 +1140,19 @@ function renderConfig(){
       <div class="field"><label>Assentos — Direita (alunos)</label><input id="cfgRight" type="number" min="0" value="${CONFIG.seatsRight}"/></div>
     </div>
     <p class="note">Total por fileira: ${CONFIG.seatsLeft+CONFIG.seatsCenter+CONFIG.seatsRight} · Total da sala: ${CONFIG.rows*(CONFIG.seatsLeft+CONFIG.seatsCenter+CONFIG.seatsRight)} lugares (${CONFIG.rows*(CONFIG.seatsLeft+CONFIG.seatsCenter)} à venda + ${CONFIG.rows*CONFIG.seatsRight} para alunos por padrão).</p>
-    <hr style="border:none; border-top:1px solid var(--line); margin:16px 0;"/>
-    <label style="margin-bottom:8px;">Preço por fileira (R$)</label>
-    <div class="price-grid">${renderPriceInputs()}</div>
-    <button class="btn gold" id="btnSalvarSala" style="margin-top:14px;">Salvar sala e preços</button>
+    <button class="btn gold" id="btnSalvarSala" style="margin-top:6px;">Salvar sala</button>
+  </div>
+
+  <div class="panel">
+    <h2>Preço por assento</h2>
+    <p class="note" style="margin-top:-6px;">Clique nos assentos pra selecionar (pode marcar vários de uma vez) e defina o preço deles juntos. O número dentro do assento é o preço já definido (arredondado).</p>
+    <div id="priceMapArea">${renderPriceMap()}</div>
+    <p class="note" id="priceSelCount">0 assento(s) selecionado(s)</p>
+    <div class="row" style="margin-top:8px;">
+      <div class="field"><label>Preço para os selecionados (R$)</label><input id="bulkPriceInput" type="number" min="0" step="0.01" placeholder="0,00"/></div>
+      <button class="btn gold" id="btnApplyPrice" style="align-self:flex-end;">Aplicar aos selecionados</button>
+      <button class="btn ghost" id="btnClearPriceSel" style="align-self:flex-end;">Limpar seleção</button>
+    </div>
   </div>
 
   <div class="panel">
@@ -1032,20 +1166,32 @@ function renderConfig(){
     <button class="btn ghost" id="btnAddShow">+ Adicionar espetáculo</button>
   </div>`;
   content.innerHTML = html;
+  attachPriceMapHandlers();
+  updatePriceSelCount();
+
+  document.getElementById('btnApplyPrice').addEventListener('click', async ()=>{
+    const v = parseFloat(document.getElementById('bulkPriceInput').value.replace(',','.'));
+    if(isNaN(v)){ showToast('Digite um preço válido'); return; }
+    if(!priceSelectedSeats.size){ showToast('Selecione pelo menos um assento'); return; }
+    CONFIG.prices = CONFIG.prices || {};
+    priceSelectedSeats.forEach(id=>{ CONFIG.prices[id] = v; });
+    await saveConfig();
+    priceSelectedSeats.clear();
+    showToast('Preço aplicado');
+    renderConfig();
+  });
+  document.getElementById('btnClearPriceSel').addEventListener('click', ()=>{
+    priceSelectedSeats.clear();
+    renderConfig();
+  });
 
   document.getElementById('btnSalvarSala').addEventListener('click', async ()=>{
     CONFIG.rows = Math.max(1, parseInt(document.getElementById('cfgRows').value)||1);
     CONFIG.seatsLeft = Math.max(0, parseInt(document.getElementById('cfgLeft').value)||0);
     CONFIG.seatsCenter = Math.max(0, parseInt(document.getElementById('cfgCenter').value)||0);
     CONFIG.seatsRight = Math.max(0, parseInt(document.getElementById('cfgRight').value)||0);
-    CONFIG.prices = CONFIG.prices || {};
-    document.querySelectorAll('.priceInput').forEach(inp=>{
-      const v = parseFloat(inp.value.replace(',','.'));
-      if(!isNaN(v)) CONFIG.prices[inp.dataset.row] = v;
-      else delete CONFIG.prices[inp.dataset.row];
-    });
     await saveConfig();
-    showToast('Sala e preços atualizados');
+    showToast('Sala atualizada');
     renderConfig();
   });
 
@@ -1269,6 +1415,7 @@ function addCheckinLog(seatId, found, seat, kind){
 function switchTab(tab){
   if(currentTab==='checkin' && tab!=='checkin'){ stopScanner(); }
   if(currentTab==='publico' && tab!=='publico'){ stopCountdown(); }
+  if(currentTab==='painel' && tab!=='painel'){ selectionMode = false; selectedSeats.clear(); }
   currentTab = tab;
   document.querySelectorAll('nav.tabs button').forEach(b=> b.classList.toggle('active', b.dataset.tab===tab));
   if(tab==='painel') renderPainel();
