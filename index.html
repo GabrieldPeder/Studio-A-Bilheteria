@@ -57,6 +57,10 @@
   nav.tabs button.active{background:var(--pink); color:#1c0710; box-shadow: inset 0 0 0 1px rgba(255,255,255,.15);}
   nav.tabs button:hover:not(.active){color:var(--cream);}
 
+  nav.tabs .admin-tab{display:none;}
+  body.staff-mode nav.tabs .admin-tab{display:block;}
+  .public-team-entry{margin-left:auto;}
+
   .panel{background:var(--bg-panel); border:1px solid var(--line); border-radius:16px; padding:22px; box-shadow:var(--shadow); margin-bottom:18px;}
   .panel h2{font-family:'Cormorant Garamond', serif; font-size:22px; margin:0 0 14px; color:var(--pink-soft); font-weight:700;}
   .row{display:flex; gap:14px; flex-wrap:wrap; align-items:center;}
@@ -173,7 +177,7 @@
   .show-card .show-head{display:flex; gap:10px; align-items:center; margin-bottom:10px;}
   .show-head input{flex:1; font-weight:700; font-size:15px;}
   .bg-upload-row{display:flex; align-items:center; gap:12px; margin-bottom:12px;}
-  .bg-preview{width:90px; height:50px; object-fit:cover; border-radius:8px; border:1px solid var(--line);}
+  .bg-preview{width:90px; height:50px; object-fit:contain; background:#0c0a0d; border-radius:8px; border:1px solid var(--line);}
   .bg-preview.empty-bg{display:flex; align-items:center; justify-content:center; font-size:10px; color:var(--muted); background:var(--bg-panel-2);}
   .bg-upload-actions{display:flex; flex-direction:column; gap:6px;}
   .bg-upload-label{cursor:pointer; display:inline-block;}
@@ -246,6 +250,121 @@
   @media(max-width:360px){
     .brand .eyebrow{display:none;}
   }
+
+
+  /* ===== Refinamento visual 2026 ===== */
+  :root{
+    --panel-glow: 0 18px 55px rgba(0,0,0,.42);
+    --success:#61d69a;
+    --warning:#f0c419;
+  }
+  body::before{
+    content:""; position:fixed; inset:0; pointer-events:none; z-index:-1;
+    background:
+      radial-gradient(circle at 15% 10%, rgba(228,19,111,.10), transparent 30%),
+      radial-gradient(circle at 85% 32%, rgba(242,111,168,.06), transparent 26%);
+  }
+  .panel{
+    position:relative; overflow:hidden;
+    background:linear-gradient(180deg, rgba(31,26,34,.94), rgba(23,20,26,.98));
+    border-color:rgba(242,111,168,.15);
+    box-shadow:var(--panel-glow);
+  }
+  .panel::before{
+    content:""; position:absolute; left:22px; right:22px; top:0; height:1px;
+    background:linear-gradient(90deg, transparent, rgba(242,111,168,.35), transparent);
+  }
+  .panel h2{letter-spacing:.01em;}
+  nav.tabs{box-shadow:0 8px 24px rgba(0,0,0,.22);}
+  nav.tabs button.active{box-shadow:0 7px 20px rgba(228,19,111,.22), inset 0 0 0 1px rgba(255,255,255,.12);}
+  select,input,textarea{transition:border-color .18s, box-shadow .18s, background .18s;}
+  select:focus,input:focus,textarea:focus{box-shadow:0 0 0 3px rgba(228,19,111,.10);}
+  .btn{transition:transform .15s, background .15s, border-color .15s, box-shadow .15s;}
+  .btn:hover:not(:disabled){transform:translateY(-1px);}
+  .btn.gold{box-shadow:0 8px 20px rgba(228,19,111,.18);}
+
+  .session-overview{
+    margin:14px 0 4px; padding:14px 16px; border:1px solid rgba(242,111,168,.18);
+    border-radius:12px; background:linear-gradient(135deg, rgba(228,19,111,.09), rgba(255,255,255,.025));
+    display:grid; grid-template-columns:minmax(180px,1fr) minmax(220px,1.5fr); gap:16px; align-items:center;
+  }
+  .session-overview .session-meta{display:flex; flex-direction:column; gap:4px;}
+  .session-overview .session-kicker{font-size:10px; letter-spacing:.14em; text-transform:uppercase; color:var(--muted); font-weight:700;}
+  .session-overview .session-title{font-family:'Cormorant Garamond',serif; font-size:20px; font-weight:700; color:var(--cream);}
+  .countdown{margin:0; text-align:left; font-family:'Work Sans',sans-serif; font-size:12px; color:var(--pink-soft); font-weight:600;}
+  .occupancy{display:flex; flex-direction:column; gap:7px;}
+  .occupancy-head{display:flex; align-items:center; justify-content:space-between; gap:10px; font-size:12px; color:var(--muted);}
+  .occupancy-head strong{color:var(--cream); font-size:13px;}
+  .occupancy-track{height:9px; background:#2b242e; border:1px solid rgba(255,255,255,.05); border-radius:999px; overflow:hidden; position:relative;}
+  .occupancy-fill{height:100%; width:0; border-radius:inherit; background:linear-gradient(90deg,var(--pink-deep),var(--pink),var(--pink-soft)); transition:width .55s cubic-bezier(.2,.8,.2,1); position:relative;}
+  .occupancy-fill::after{content:""; position:absolute; inset:0; background:linear-gradient(90deg,transparent,rgba(255,255,255,.25),transparent); transform:translateX(-100%); animation:softShine 3.4s ease-in-out infinite;}
+
+  .summary{gap:10px; margin-top:18px;}
+  .summary .stat{min-width:112px; padding:12px 14px; border-radius:11px; border:1px solid rgba(255,255,255,.06); background:rgba(255,255,255,.025);}
+  .summary .stat b{font-size:25px;}
+
+  .report-card{margin-top:18px; border:1px solid rgba(242,111,168,.17); border-radius:14px; padding:18px; background:rgba(12,10,13,.28);}
+  .report-head{display:flex; align-items:flex-start; justify-content:space-between; gap:14px; margin-bottom:14px; flex-wrap:wrap;}
+  .report-head h3{font-family:'Cormorant Garamond',serif; font-size:22px; margin:0; color:var(--cream);}
+  .report-sub{font-size:12px;color:var(--muted);margin-top:3px;}
+  .report-grid{display:grid;grid-template-columns:repeat(5,minmax(110px,1fr));gap:10px;}
+  .report-stat{padding:13px 14px;border-radius:11px;background:var(--bg-panel-2);border:1px solid var(--line);}
+  .report-stat .label{font-size:10px;letter-spacing:.08em;text-transform:uppercase;color:var(--muted);font-weight:700;}
+  .report-stat .value{display:block;margin-top:4px;font-family:'Cormorant Garamond',serif;font-size:25px;line-height:1;color:var(--pink-soft);font-weight:700;}
+  .report-stat.money .value{font-family:'Work Sans',sans-serif;font-size:19px;line-height:1.25;}
+  .report-progress{margin-top:13px;}
+  .report-progress .occupancy-track{height:7px;}
+
+  .seat{transition:transform .14s ease, filter .14s ease, box-shadow .14s ease, background .14s ease;}
+  .seat:hover:not(.aisle-gap):not(.readonly){transform:translateY(-2px) scale(1.07); filter:brightness(1.10); box-shadow:0 5px 12px rgba(0,0,0,.28);}
+  #mapArea .seat:not(.aisle-gap){animation:seatIn .25s both;}
+
+  @keyframes seatIn{from{opacity:.25;transform:translateY(3px) scale(.94)}to{opacity:1;transform:none}}
+  @keyframes softShine{0%,60%{transform:translateX(-110%)}85%,100%{transform:translateX(110%)}}
+  @media(prefers-reduced-motion:reduce){*{animation:none!important;transition:none!important;}}
+
+  @media(max-width:780px){
+    .session-overview{grid-template-columns:1fr;gap:10px;}
+    .report-grid{grid-template-columns:repeat(2,minmax(120px,1fr));}
+  }
+  @media(max-width:420px){.report-grid{grid-template-columns:1fr 1fr}.report-stat{padding:11px}.report-stat .value{font-size:21px}}
+
+  /* Ingresso premium: mantém a identidade do Studio A e varia por espetáculo */
+  @media print{
+    #printArea{gap:12px!important;align-items:flex-start;}
+    .ticket{
+      --ticket-accent:#e4136f; --ticket-soft:#f26fa8; --ticket-deep:#6d0936;
+      width:300px; min-height:470px; padding:0!important; overflow:hidden; position:relative;
+      border:1px solid #d9d2d6!important; border-radius:18px!important; background:#fff!important;
+      color:#1d151b!important; box-shadow:none!important; text-align:left!important;
+    }
+    .ticket.theme-frozen{--ticket-accent:#477ea6;--ticket-soft:#87b6d8;--ticket-deep:#183b59;}
+    .ticket.theme-wicked{--ticket-accent:#3b8a5b;--ticket-soft:#84bd79;--ticket-deep:#173f29;}
+    .ticket.theme-showman{--ticket-accent:#9d3137;--ticket-soft:#d6a85e;--ticket-deep:#4f171c;}
+    .ticket-hero{height:126px; position:relative; overflow:hidden; padding:18px 18px 14px; background:linear-gradient(135deg,var(--ticket-deep),var(--ticket-accent)); color:#fff;}
+    .ticket-hero.has-bg::before{content:"";position:absolute;inset:0;background-image:var(--ticket-bg);background-size:contain;background-repeat:no-repeat;background-position:center;opacity:.34;filter:saturate(.88) contrast(1.03);}
+    .ticket-hero::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.35),transparent 60%);}
+    .ticket-hero > *{position:relative;z-index:1;}
+    .ticket-brandline{display:flex;align-items:center;gap:9px;}
+    .ticket-logo{width:34px!important;height:34px!important;border-radius:8px!important;margin:0!important;background:#fff;}
+    .ticket-brandname{font-size:11px;letter-spacing:.15em;text-transform:uppercase;font-weight:700;opacity:.92;}
+    .ticket-show{font-family:'Cormorant Garamond',serif!important;font-size:25px!important;line-height:1!important;margin:15px 0 0!important;color:#fff!important;font-weight:700!important;}
+    .ticket-body{padding:16px 18px 14px;}
+    .ticket-info-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:10px;margin-bottom:14px;}
+    .ticket-info{padding:9px 10px;background:#f7f3f5;border-radius:9px;border:1px solid #ece4e8;}
+    .ticket-info small{display:block;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:#7c6d75;font-weight:700;margin-bottom:3px;}
+    .ticket-info strong{font-size:12px;line-height:1.25;display:block;color:#21171d;}
+    .ticket-info.seat strong{font-family:'Cormorant Garamond',serif;font-size:24px;color:var(--ticket-accent);line-height:.9;}
+    .ticket-person{font-size:11px;color:#554850;margin:0 0 11px;padding-bottom:11px;border-bottom:1px dashed #cfc4ca;}
+    .ticket-person b{color:#21171d;}
+    .ticket-bottom{display:grid;grid-template-columns:112px 1fr;gap:13px;align-items:center;}
+    .ticket-qr{width:112px!important;height:112px!important;margin:0!important;border:6px solid #fff;box-shadow:0 0 0 1px #ddd;border-radius:8px;}
+    .ticket-code{font-family:monospace!important;letter-spacing:.06em!important;font-size:9px!important;color:#6b5e65!important;word-break:break-all;margin:0 0 7px!important;}
+    .ticket-status{margin:0 0 8px!important;border:none!important;background:var(--ticket-accent)!important;color:#fff!important;padding:4px 9px!important;}
+    .ticket-rules{font-size:8.5px;line-height:1.35;color:#756870;margin:0;}
+    .ticket-footer{height:7px;background:linear-gradient(90deg,var(--ticket-deep),var(--ticket-accent),var(--ticket-soft));}
+  }
+
 </style>
 </head>
 <body>
@@ -260,9 +379,9 @@
     </div>
     <nav class="tabs">
       <button data-tab="publico" class="active">Site Público</button>
-      <button data-tab="painel">Painel de Controle</button>
-      <button data-tab="checkin">Check-in</button>
-      <button data-tab="config">Configurações</button>
+      <button data-tab="painel" class="admin-tab">Painel de Controle</button>
+      <button data-tab="checkin" class="admin-tab">Check-in</button>
+      <button data-tab="config" class="admin-tab">Configurações</button>
     </nav>
     <div id="authStatus" class="auth-status"></div>
     <button id="btnInstallPWA" class="btn gold tiny" style="display:none;">⬇️ Instalar app</button>
@@ -309,12 +428,15 @@ if(FIREBASE_READY){
 function updateAuthStatus(){
   const el = document.getElementById('authStatus');
   if(!el) return;
+  document.body.classList.toggle('staff-mode', !!currentUser);
   if(currentUser){
     el.innerHTML = `<span class="who">${escapeHtml(currentUser.email)}</span><button class="btn ghost tiny" id="btnLogout">Sair</button>`;
     const b = document.getElementById('btnLogout');
-    if(b) b.addEventListener('click', ()=> auth.signOut());
+    if(b) b.addEventListener('click', ()=>{ auth.signOut(); switchTab('publico'); });
   } else {
-    el.innerHTML = '';
+    el.innerHTML = `<button class="btn ghost tiny public-team-entry" id="btnTeamLogin">Área da equipe</button>`;
+    const b = document.getElementById('btnTeamLogin');
+    if(b) b.addEventListener('click', ()=> switchTab('painel'));
   }
 }
 function renderLoginScreen(){
@@ -365,6 +487,8 @@ let currentShowId = null;
 let currentSessionId = null;
 let liveSeatsRef = null;
 let countdownTimer = null;
+let reportCache = {};
+let reportRefreshTimer = null;
 function stopCountdown(){
   if(countdownTimer){ clearInterval(countdownTimer); countdownTimer = null; }
 }
@@ -433,13 +557,16 @@ function escapeHtml(str){
 
 /* ---------- Config ---------- */
 async function loadConfig(){
+  let readOk = false;
   try{
     const snap = await db.ref('config').once('value');
     CONFIG = snap.val();
+    readOk = true;
   }catch(e){ CONFIG = null; }
   if(!CONFIG){
     CONFIG = JSON.parse(JSON.stringify(DEFAULT_CONFIG));
-    await saveConfig();
+    // Só tenta criar a configuração quando há uma leitura válida ou usuário autenticado.
+    if(readOk && currentUser) await saveConfig();
   }
   if(!CONFIG.shows) CONFIG.shows = [];
   if(!CONFIG.prices) CONFIG.prices = {};
@@ -524,8 +651,9 @@ function renderSeatMap(seats, readonly){
       const st = seats[id] ? seats[id].status : defaultStatusFor(id);
       const cls = st==='livre' ? '' : st;
       const mark = st==='indisponivel' ? '✕' : '';
-      const title = st==='aluno' ? id+' — reservado para alunos' : id;
-      html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${title}">${mark}</div>`;
+      const who = seats[id] && seats[id].nome ? ' — ' + seats[id].nome : '';
+      const title = st==='aluno' ? id+' — reservado para alunos' : id+' — '+statusLabel(st)+who;
+      html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}</div>`;
       if(n === CONFIG.seatsLeft || n === CONFIG.seatsLeft + CONFIG.seatsCenter){
         html += `<div class="seat aisle-gap"></div>`;
       }
@@ -557,6 +685,99 @@ function computeSummary(seats){
   }
   const sellable = livre + vendido + indisponivel;
   return {sellable, livre, indisponivel, vendido, alunos};
+}
+
+function moneyBRL(value){
+  return Number(value||0).toLocaleString('pt-BR',{style:'currency',currency:'BRL'});
+}
+function sessionOccupancy(seats){
+  const sum = computeSummary(seats||{});
+  const totalRoom = sum.sellable;
+  const pct = totalRoom ? (sum.vendido / totalRoom) * 100 : 0;
+  return {sum,totalRoom,pct};
+}
+function renderSessionOverview(seats, found){
+  if(!found) return '';
+  const occ = sessionOccupancy(seats);
+  const countdown = formatCountdown(found.session) || '';
+  return `<div class="session-overview">
+    <div class="session-meta">
+      <span class="session-kicker">Sessão selecionada</span>
+      <span class="session-title">${escapeHtml(sessionLabel(found.session))}</span>
+      <span id="countdownArea" class="countdown">${escapeHtml(countdown)}</span>
+    </div>
+    <div class="occupancy">
+      <div class="occupancy-head"><span>Lotação da sessão</span><strong>${occ.pct.toFixed(1).replace('.',',')}% ocupada</strong></div>
+      <div class="occupancy-track"><div class="occupancy-fill" style="width:${Math.min(100,occ.pct).toFixed(2)}%"></div></div>
+      <div class="note">${occ.sum.vendido} vendidos de ${occ.totalRoom} lugares vendíveis</div>
+    </div>
+  </div>`;
+}
+async function getShowReport(show){
+  const sessions = (show && show.sessions) || [];
+  await Promise.all(sessions.map(async se=>{
+    if(SEATS_CACHE[se.id] !== undefined) return;
+    try{
+      const snap = await db.ref('seats/'+se.id).once('value');
+      SEATS_CACHE[se.id] = snap.val() || {};
+    }catch(e){ SEATS_CACHE[se.id] = {}; }
+  }));
+  let sold=0, checked=0, revenue=0, totalPlaces=0;
+  for(const se of sessions){
+    const seats = SEATS_CACHE[se.id] || {};
+    const sum = computeSummary(seats);
+    // Alunos não fazem parte da lotação comercial.
+    // Lugares indisponíveis também não são vendíveis.
+    totalPlaces += sum.sellable - sum.indisponivel;
+    Object.entries(seats).forEach(([id,d])=>{
+      if(d && d.status==='vendido'){
+        sold++;
+        if(d.checkin) checked++;
+        revenue += Number((CONFIG.prices && CONFIG.prices[id]) || 0);
+      }
+    });
+  }
+  const occupancy = totalPlaces ? sold/totalPlaces*100 : 0;
+  const now = Date.now();
+  const allEnded = sessions.length>0 && sessions.every(se=>{
+    const d = new Date(se.date+'T'+(se.time||'00:00')+':00');
+    return !isNaN(d.getTime()) && d.getTime() < now;
+  });
+  return {sessions:sessions.length,totalPlaces,sold,checked,revenue,occupancy,missing:Math.max(0,sold-checked),allEnded};
+}
+async function renderShowReport(showId){
+  const box = document.getElementById('showReportArea');
+  if(!box) return;
+  const show = CONFIG.shows.find(s=>s.id===showId);
+  if(!show){ box.innerHTML=''; return; }
+  const cache = reportCache[showId];
+  if(cache && Date.now() - cache.at < 2500){
+    renderShowReportHtml(box, show, cache.data);
+    return;
+  }
+  box.innerHTML='<div class="report-card"><div class="empty">Calculando relatório do espetáculo…</div></div>';
+  const r = await getShowReport(show);
+  reportCache[showId] = {at:Date.now(), data:r};
+  if(!document.getElementById('showReportArea') || currentShowId!==showId) return;
+  renderShowReportHtml(box, show, r);
+}
+function renderShowReportHtml(box, show, r){
+  const missingLabel = r.allEnded ? 'Não compareceram' : 'Ainda sem check-in';
+  box.innerHTML = `<div class="report-card">
+    <div class="report-head"><div><h3>Relatório — ${escapeHtml(show.name)}</h3><div class="report-sub">Consolidado de ${r.sessions} sessão(ões) · atualizado com as vendas salvas no Firebase</div></div></div>
+    <div class="report-grid">
+      <div class="report-stat"><span class="label">Lugares</span><span class="value">${r.totalPlaces}</span></div>
+      <div class="report-stat"><span class="label">Vendidos</span><span class="value">${r.sold}</span></div>
+      <div class="report-stat"><span class="label">Ocupação</span><span class="value">${r.occupancy.toFixed(1).replace('.',',')}%</span></div>
+      <div class="report-stat money"><span class="label">Faturamento</span><span class="value">${moneyBRL(r.revenue)}</span></div>
+      <div class="report-stat"><span class="label">Check-ins</span><span class="value">${r.checked}</span></div>
+      <div class="report-stat"><span class="label">${missingLabel}</span><span class="value">${r.missing}</span></div>
+    </div>
+    <div class="report-progress">
+      <div class="occupancy-head"><span>Ocupação geral do espetáculo</span><strong>${r.sold} / ${r.totalPlaces} vendíveis</strong></div>
+      <div class="occupancy-track"><div class="occupancy-fill" style="width:${Math.min(100,r.occupancy).toFixed(2)}%"></div></div>
+    </div>
+  </div>`;
 }
 
 let priceSelectedSeats = new Set();
@@ -595,9 +816,14 @@ function updatePriceSelCount(){
   if(el) el.textContent = priceSelectedSeats.size + ' assento(s) selecionado(s)';
 }
 
+function formatDateBR(dateStr){
+  if(!dateStr) return '';
+  const m = String(dateStr).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return m ? `${m[3]}/${m[2]}/${m[1]}` : dateStr;
+}
 function sessionLabel(session){
   const parts = [];
-  if(session.date) parts.push(session.date);
+  if(session.date) parts.push(formatDateBR(session.date));
   if(session.time) parts.push(session.time);
   return parts.length ? parts.join(' · ') : 'Sessão sem data definida';
 }
@@ -663,6 +889,7 @@ async function renderPainel(){
       <button class="btn ${selectionMode?'gold':'ghost'} tiny" id="btnToggleSelection" type="button">☑️ ${selectionMode ? 'Sair da seleção múltipla' : 'Selecionar vários assentos'}</button>
     </div>
     <div id="selectionToolbar"></div>
+    <div id="sessionOverviewArea"></div>
     <div class="search-box" style="margin-top:14px;">
       <input id="buscaComprador" placeholder="Buscar por nome do comprador nesta sessão…" />
       <button class="btn ghost tiny" id="btnBuscar">Buscar</button>
@@ -670,6 +897,7 @@ async function renderPainel(){
     <div id="foundResults"></div>
     <div id="mapArea"><div class="empty">Carregando…</div></div>
     <div id="summaryArea"></div>
+    <div id="showReportArea"></div>
   </div>`;
 
   document.getElementById('selShow').addEventListener('change', e=>{
@@ -705,6 +933,9 @@ async function renderPainel(){
     if(currentTab!=='painel') return;
     const mapArea = document.getElementById('mapArea');
     if(!mapArea) return;
+    const foundNow = findShowAndSession(currentSessionId);
+    const overview = document.getElementById('sessionOverviewArea');
+    if(overview) overview.innerHTML = renderSessionOverview(seats, foundNow);
     mapArea.innerHTML = renderSeatMap(seats, false);
     fitSeatmap(mapArea);
     const sum = computeSummary(seats);
@@ -712,8 +943,13 @@ async function renderPainel(){
       <div class="stat"><b>${sum.livre}</b><span>Livres</span></div>
       <div class="stat"><b>${sum.vendido}</b><span>Vendidos</span></div>
       <div class="stat"><b>${sum.indisponivel}</b><span>Indisponíveis</span></div>
-      <div class="stat"><b>${sum.alunos}</b><span>Alunos (não vendável)</span></div>
+      <div class="stat"><b>${sum.alunos}</b><span>Alunos · sem ingresso</span></div>
     </div>`;
+    if(!reportCache[currentShowId]) renderShowReport(currentShowId);
+    else {
+      clearTimeout(reportRefreshTimer);
+      reportRefreshTimer = setTimeout(()=>{ reportCache[currentShowId]=null; renderShowReport(currentShowId); }, 450);
+    }
     document.querySelectorAll('#mapArea .seat[data-seat]').forEach(el=>{
       const id = el.dataset.seat;
       if(selectionMode && selectedSeats.has(id)) el.classList.add('selected');
@@ -779,9 +1015,16 @@ function openBulkSellModal(){
     const telefone = overlay.querySelector('#bsTel').value.trim();
     const email = overlay.querySelector('#bsEmail').value.trim();
     const obs = overlay.querySelector('#bsObs').value.trim();
-    for(const id of ids){
-      await saveSeat(currentSessionId, id, { status:'vendido', nome, telefone, email, obs });
-    }
+    const updates = {};
+    const historyUpdates = {};
+    const now = Date.now();
+    ids.forEach(id=>{
+      updates['seats/'+currentSessionId+'/'+id] = { status:'vendido', nome, telefone, email, obs };
+      const hKey = db.ref('history/'+currentSessionId+'/'+id).push().key;
+      historyUpdates['history/'+currentSessionId+'/'+id+'/'+hKey] = { status:'vendido', nome, at:now, by:currentUser?currentUser.email:'?' };
+    });
+    try{ await db.ref().update({...updates, ...historyUpdates}); }
+    catch(e){ showToast('Erro ao salvar os assentos'); return; }
     overlay.remove();
     selectedSeats.clear();
     showToast(ids.length + ' assentos marcados como vendidos');
@@ -986,22 +1229,41 @@ function findShowAndSession(sessionId){
   return null;
 }
 function buildTicketHtml({seatId, show, session, nome, status}){
-  const code = ticketCode(currentSessionId, seatId);
-  const qr = 'https://api.qrserver.com/v1/create-qr-code/?size=140x140&data=' + encodeURIComponent('STUDIOA|'+code);
-  const bgStyle = show.backgroundImage
-    ? `style="background-image: linear-gradient(rgba(255,255,255,.85),rgba(255,255,255,.85)), url('${show.backgroundImage}'); background-size:cover; background-position:center;"`
-    : '';
+  const code = ticketCode(session.id, seatId);
+  const qr = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent('STUDIOA|'+code);
+  const lname = (show.name||'').toLowerCase();
+  const theme = lname.includes('frozen') ? 'theme-frozen' : lname.includes('wicked') ? 'theme-wicked' : (lname.includes('show') || lname.includes('rei')) ? 'theme-showman' : '';
+  const heroBg = show.backgroundImage ? `style="--ticket-bg:url('${show.backgroundImage.replace(/'/g,"\\'")}')"` : '';
+  const heroClass = show.backgroundImage ? 'ticket-hero has-bg' : 'ticket-hero';
+  const dateText = session.date ? new Date(session.date+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'}) : 'Data a confirmar';
+  const timeText = session.time || '--:--';
   return `
-    <div class="ticket" ${bgStyle}>
-      <img class="ticket-logo" src="${document.querySelector('.brand img').src}" alt="Studio A"/>
-      <h2>Studio A</h2>
-      <p class="ticket-show">${escapeHtml(show.name||'')}</p>
-      <p class="ticket-session">${escapeHtml(sessionLabel(session))}</p>
-      <p class="ticket-seat">Assento <b>${seatId}</b></p>
-      <p class="ticket-name">${escapeHtml(nome||'')}</p>
-      <img class="ticket-qr" src="${qr}" alt="QR"/>
-      <p class="ticket-code">${code.toUpperCase()}</p>
-      <p class="ticket-status">PAGO</p>
+    <div class="ticket ${theme}">
+      <div class="${heroClass}" ${heroBg}>
+        <div class="ticket-brandline">
+          <img class="ticket-logo" src="${document.querySelector('.brand img').src}" alt="Studio A"/>
+          <span class="ticket-brandname">Studio A · Bilheteria</span>
+        </div>
+        <p class="ticket-show">${escapeHtml(show.name||'Espetáculo')}</p>
+      </div>
+      <div class="ticket-body">
+        <div class="ticket-info-grid">
+          <div class="ticket-info"><small>Data</small><strong>${dateText}</strong></div>
+          <div class="ticket-info"><small>Horário</small><strong>${escapeHtml(timeText)}</strong></div>
+          <div class="ticket-info"><small>Sessão</small><strong>${escapeHtml(sessionLabel(session))}</strong></div>
+          <div class="ticket-info seat"><small>Assento</small><strong>${escapeHtml(seatId)}</strong></div>
+        </div>
+        <p class="ticket-person">Ingresso de <b>${escapeHtml(nome||'Visitante')}</b></p>
+        <div class="ticket-bottom">
+          <img class="ticket-qr" src="${qr}" alt="QR Code do ingresso"/>
+          <div>
+            <p class="ticket-code">${escapeHtml(code.toUpperCase())}</p>
+            <span class="ticket-status">PAGO</span>
+            <p class="ticket-rules">Apresente este QR Code na entrada. O ingresso é válido para uma única entrada e para a sessão indicada. Chegue com antecedência e mantenha o código legível.</p>
+          </div>
+        </div>
+      </div>
+      <div class="ticket-footer"></div>
     </div>`;
 }
 function waitForImages(container, timeout){
@@ -1077,13 +1339,14 @@ async function sendTicketEmail(info){
 
 /* ---------- Site Público ---------- */
 async function renderPublico(){
+  // O site público NUNCA depende do Firebase Auth. Login só é exigido no painel/check-in/configurações.
   stopCountdown();
   const content = document.getElementById('content');
   content.innerHTML = `<div class="panel">
     <h2>Consulta de Disponibilidade</h2>
     <p class="note" style="margin:-6px 0 14px;">Escolha o espetáculo e a sessão para ver os lugares livres. Para reservar, entre em contato com a organização.</p>
     ${showSessionSelector()}
-    <div id="countdownArea" class="countdown"></div>
+    <div id="sessionOverviewArea"></div>
     <div id="mapArea"><div class="empty">Carregando…</div></div>
     <div id="summaryArea"></div>
   </div>`;
@@ -1104,12 +1367,13 @@ async function renderPublico(){
     if(!el) return;
     el.textContent = foundNow ? (formatCountdown(foundNow.session) || '') : '';
   };
-  updateCountdown();
   countdownTimer = setInterval(updateCountdown, 60000);
   attachLiveSeats(currentSessionId, (seats)=>{
     if(currentTab!=='publico') return;
     const mapArea = document.getElementById('mapArea');
     if(!mapArea) return;
+    const overview = document.getElementById('sessionOverviewArea');
+    if(overview) overview.innerHTML = renderSessionOverview(seats, foundNow);
     mapArea.innerHTML = renderSeatMap(seats, true);
     fitSeatmap(mapArea);
     const sum = computeSummary(seats);
@@ -1153,11 +1417,6 @@ function renderConfig(){
       <button class="btn gold" id="btnApplyPrice" style="align-self:flex-end;">Aplicar aos selecionados</button>
       <button class="btn ghost" id="btnClearPriceSel" style="align-self:flex-end;">Limpar seleção</button>
     </div>
-  </div>
-
-  <div class="panel">
-    <h2>Envio de ingresso por e-mail</h2>
-    <p class="note" style="margin-top:-4px;">${EMAILJS_READY ? 'Configurado — o botão "Enviar por e-mail" já funciona no painel.' : 'Ainda não configurado. Crie uma conta grátis em <code>dashboard.emailjs.com</code>, conecte seu e-mail, crie um template e cole o Public Key / Service ID / Template ID no objeto <code>emailjsConfig</code>, perto do topo do arquivo.'}</p>
   </div>
 
   <div class="panel">
@@ -1385,7 +1644,10 @@ async function handleScannedText(text){
   }catch(e){ seat = null; }
 
   if(!seat || seat.status!=='vendido'){
-    resultBox.innerHTML = `<div class="scan-banner invalid">❌ Assento ${seatId} não consta como vendido</div>`;
+    const msg = seat && seat.status==='aluno'
+      ? `🎓 Assento ${seatId} é reservado para aluno e não possui ingresso/check-in.`
+      : `❌ Assento ${seatId} não consta como vendido`;
+    resultBox.innerHTML = `<div class="scan-banner invalid">${msg}</div>`;
     addCheckinLog(seatId, found, null, 'invalido');
     return;
   }
