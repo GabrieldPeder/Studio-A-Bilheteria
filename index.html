@@ -1630,8 +1630,11 @@ async function handleScannedText(text){
     resultBox.innerHTML = `<div class="scan-banner invalid">❌ Código inválido</div>`;
     return;
   }
-  const sessionId = code.slice(0, idx);
-  const seatId = code.slice(idx+1);
+  // Os códigos podem ser digitados manualmente com maiúsculas/minúsculas.
+  // Os IDs internos das sessões são mantidos como foram salvos no Firebase.
+  const rawSessionId = code.slice(0, idx).trim();
+  const sessionId = rawSessionId.toLowerCase();
+  const seatId = code.slice(idx+1).trim().toUpperCase();
   const found = findShowAndSession(sessionId);
   if(!found){
     resultBox.innerHTML = `<div class="scan-banner invalid">❌ Sessão não encontrada — pode ser de outro evento</div>`;
