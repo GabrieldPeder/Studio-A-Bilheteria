@@ -365,7 +365,7 @@
     .ticket-footer{height:7px;background:linear-gradient(90deg,var(--ticket-deep),var(--ticket-accent),var(--ticket-soft));}
   }
 
-</style>
+.stair-seatmap{min-width:fit-content}.stair-row{width:max-content;margin-left:auto;margin-right:auto}.stair-empty{visibility:hidden;pointer-events:none;background:transparent!important;border-color:transparent!important;box-shadow:none!important}.stair-row .seat{flex:0 0 34px}.stair-row .aisle-gap{flex:0 0 18px!important}.stair-row .row-label{flex:0 0 28px}</style>
 </head>
 <body>
 <div class="app">
@@ -516,6 +516,7 @@ const DEFAULT_CONFIG = {
   seatsCenter: 8,
   seatsRight: 8,
   prices: {},
+  globalUnavailable: {},
   shows: [
     { id: 'show1', name: 'Rei o Show', sessions: [ { id: 's1_1', date: '', time: '' } ] },
     { id: 'show2', name: 'Frozen', sessions: [ { id: 's2_1', date: '', time: '' } ] },
@@ -570,12 +571,33 @@ async function loadConfig(){
   }
   if(!CONFIG.shows) CONFIG.shows = [];
   if(!CONFIG.prices) CONFIG.prices = {};
+  if(!CONFIG.globalUnavailable) CONFIG.globalUnavailable = {};
   if(!currentShowId && CONFIG.shows.length) currentShowId = CONFIG.shows[0].id;
   syncCurrentSession();
 }
 async function saveConfig(){
   try{ await db.ref('config').set(CONFIG); }
   catch(e){ showToast('Erro ao salvar configuração'); }
+}
+async function migrateGlobalUnavailable(){
+  // Migra indisponibilidades antigas, que eram salvas por sessão, para o estado global.
+  if(CONFIG._globalUnavailableMigrated) return;
+  const sessions = [];
+  (CONFIG.shows||[]).forEach(show=>(show.sessions||[]).forEach(se=>sessions.push(se.id)));
+  if(!sessions.length){ CONFIG._globalUnavailableMigrated = true; await db.ref('config/_globalUnavailableMigrated').set(true); return; }
+  try{
+    const snaps = await Promise.all(sessions.map(id=>db.ref('seats/'+id).once('value')));
+    const unavailable = new Set();
+    snaps.forEach(snap=>{ const seats=snap.val()||{}; Object.entries(seats).forEach(([id,d])=>{ if(d && d.status==='indisponivel') unavailable.add(id); }); });
+    const updates = {'config/_globalUnavailableMigrated':true};
+    unavailable.forEach(id=>{
+      updates['config/globalUnavailable/'+id]=true;
+      sessions.forEach(sessionId=>{ const d=(snaps[sessions.indexOf(sessionId)].val()||{})[id]; if(d && d.status==='indisponivel') updates['seats/'+sessionId+'/'+id]=null; });
+      CONFIG.globalUnavailable[id]=true;
+    });
+    await db.ref().update(updates);
+    CONFIG._globalUnavailableMigrated = true;
+  }catch(e){ /* se falhar, o sistema continua funcionando e tenta na próxima carga */ }
 }
 function syncCurrentSession(){
   const show = CONFIG.shows.find(s=>s.id===currentShowId);
@@ -604,13 +626,55 @@ function attachLiveSeats(sessionId, onUpdate){
   };
   liveSeatsRef.on('value', liveSeatsHandler);
 }
+async function setGlobalUnavailable(seatId, unavailable){
+  CONFIG.globalUnavailable = CONFIG.globalUnavailable || {};
+  if(unavailable) CONFIG.globalUnavailable[seatId] = true;
+  else delete CONFIG.globalUnavailable[seatId];
+  try{
+    const ref = db.ref('config/globalUnavailable/'+seatId);
+    if(unavailable) await ref.set(true); else await ref.remove();
+  }catch(e){ throw e; }
+}
+function isGlobalUnavailable(seatId){
+  return !!(CONFIG.globalUnavailable && CONFIG.globalUnavailable[seatId]);
+}
+let globalUnavailableRef = null;
+function attachGlobalUnavailableListener(){
+  if(globalUnavailableRef) return;
+  globalUnavailableRef = db.ref('config/globalUnavailable');
+  globalUnavailableRef.on('value', snap=>{
+    if(!CONFIG) return;
+    CONFIG.globalUnavailable = snap.val() || {};
+    if(currentTab==='publico') renderPublico();
+    else if(currentTab==='painel' && currentUser) renderPainel();
+  });
+}
+function effectiveSeatStatus(seats, seatId){
+  if(isGlobalUnavailable(seatId)) return 'indisponivel';
+  return seats[seatId] ? seats[seatId].status : defaultStatusFor(seatId);
+}
+async function clearSeatAcrossSessions(seatId){
+  const updates = {};
+  (CONFIG.shows||[]).forEach(show=>(show.sessions||[]).forEach(se=>{ updates['seats/'+se.id+'/'+seatId] = null; }));
+  if(Object.keys(updates).length) await db.ref().update(updates);
+  Object.keys(SEATS_CACHE).forEach(sessionId=>{ if(SEATS_CACHE[sessionId]) delete SEATS_CACHE[sessionId][seatId]; });
+}
 async function saveSeat(sessionId, seatId, seatData){
   try{
+    if(seatData && seatData.status === 'indisponivel'){
+      await setGlobalUnavailable(seatId, true);
+      await logHistory(sessionId, seatId, { status:'indisponivel', nome:'', at: Date.now(), by: currentUser?currentUser.email:'?' });
+      return;
+    }
+    if(isGlobalUnavailable(seatId)) await setGlobalUnavailable(seatId, false);
     if(seatData === null){
       await db.ref('seats/'+sessionId+'/'+seatId).remove();
+      if(SEATS_CACHE[sessionId]) delete SEATS_CACHE[sessionId][seatId];
       await logHistory(sessionId, seatId, { status:'livre', nome:'', at: Date.now(), by: currentUser?currentUser.email:'?' });
     } else {
       await db.ref('seats/'+sessionId+'/'+seatId).set(seatData);
+      SEATS_CACHE[sessionId] = SEATS_CACHE[sessionId] || {};
+      SEATS_CACHE[sessionId][seatId] = seatData;
       await logHistory(sessionId, seatId, { status:seatData.status, nome:seatData.nome||'', at: Date.now(), by: currentUser?currentUser.email:'?' });
     }
   }catch(e){ showToast('Erro ao salvar assento'); }
@@ -622,68 +686,73 @@ function statusLabel(st){
   return st==='vendido' ? 'Vendido' : st==='indisponivel' ? 'Indisponível' : 'Liberado';
 }
 
-/* ---------- Layout helpers (3 quadrantes) ---------- */
-function rowWidth(){ return CONFIG.seatsLeft + CONFIG.seatsCenter + CONFIG.seatsRight; }
-function blockOf(n){
-  if(n <= CONFIG.seatsLeft) return 'left';
-  if(n <= CONFIG.seatsLeft + CONFIG.seatsCenter) return 'center';
-  return 'right';
-}
-function seatColumn(seatId){
-  const m = seatId.match(/\d+$/);
-  return m ? parseInt(m[0], 10) : 1;
-}
-function seatRowLetter(seatId){
-  const m = seatId.match(/^[A-Z]+/);
-  return m ? m[0] : '';
-}
-function defaultStatusFor(seatId){
-  return blockOf(seatColumn(seatId)) === 'right' ? 'aluno' : 'livre';
-}
-
+/* ---------- Layout da sala — laterais em escada ---------- */
+const ROOM_LAYOUT = [
+  {row:'A', left:2, center:15, right:2},
+  {row:'B', left:3, center:15, right:3},
+  {row:'C', left:5, center:15, right:4},
+  {row:'D', left:6, center:15, right:5},
+  {row:'E', left:7, center:15, right:8},
+  {row:'F', left:7, center:15, right:8},
+  {row:'G', left:7, center:15, right:8},
+  {row:'H', left:7, center:15, right:8},
+  {row:'I', left:7, center:15, right:8},
+  {row:'J', left:6, center:15, right:8},
+  {row:'K', left:6, center:15, right:8},
+  {row:'L', left:4, center:15, right:8}
+];
+function roomRow(r){ return ROOM_LAYOUT[r] || {row:rowLetter(r), left:7, center:15, right:8}; }
+function rowWidth(r){ const x=roomRow(r); return x.left+x.center+x.right; }
+function blockOf(n, r){ const x=roomRow(r); if(n<=x.left) return 'left'; if(n<=x.left+x.center) return 'center'; return 'right'; }
+function seatColumn(seatId){ const m=seatId.match(/\d+$/); return m ? parseInt(m[0],10) : 1; }
+function seatRowLetter(seatId){ const m=seatId.match(/^[A-Z]+/); return m ? m[0] : ''; }
+function rowIndexFromSeatId(seatId){ const letter=seatRowLetter(seatId); return ROOM_LAYOUT.findIndex(x=>x.row===letter); }
+function defaultStatusFor(seatId){ const r=rowIndexFromSeatId(seatId); return blockOf(seatColumn(seatId), r) === 'right' ? 'aluno' : 'livre'; }
+function seatIdFor(r,n){ return roomRow(r).row+n; }
 function renderSeatMap(seats, readonly){
-  const width = rowWidth();
-  let html = '<div class="stage-wrap"><div class="stage"><span>Palco</span></div><div class="seatmap">';
-  for(let r=0;r<CONFIG.rows;r++){
-    html += `<div class="seat-row"><div class="row-label">${rowLetter(r)}</div>`;
-    for(let n=1;n<=width;n++){
-      const id = rowLetter(r)+n;
-      const st = seats[id] ? seats[id].status : defaultStatusFor(id);
-      const cls = st==='livre' ? '' : st;
-      const mark = st==='indisponivel' ? '✕' : '';
-      const who = seats[id] && seats[id].nome ? ' — ' + seats[id].nome : '';
-      const title = st==='aluno' ? id+' — reservado para alunos' : id+' — '+statusLabel(st)+who;
+  const maxLeft = Math.max(...ROOM_LAYOUT.map(x=>x.left));
+  const maxRight = Math.max(...ROOM_LAYOUT.map(x=>x.right));
+  let html = '<div class="stage-wrap"><div class="stage"><span>Palco</span></div><div class="seatmap stair-seatmap">';
+  ROOM_LAYOUT.forEach((layout,r)=>{
+    html += `<div class="seat-row stair-row" data-row="${layout.row}"><div class="row-label">${layout.row}</div>`;
+    const leftPad = maxLeft-layout.left;
+    for(let i=0;i<leftPad;i++) html += '<div class="seat stair-empty"></div>';
+    for(let n=1;n<=layout.left;n++){
+      const id=layout.row+n, st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
       html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}</div>`;
-      if(n === CONFIG.seatsLeft || n === CONFIG.seatsLeft + CONFIG.seatsCenter){
-        html += `<div class="seat aisle-gap"></div>`;
-      }
     }
-    html += `</div>`;
-  }
+    html += '<div class="seat aisle-gap"></div>';
+    for(let n=layout.left+1;n<=layout.left+layout.center;n++){
+      const id=layout.row+n, st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
+      html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}</div>`;
+    }
+    html += '<div class="seat aisle-gap"></div>';
+    for(let n=layout.left+layout.center+1;n<=layout.left+layout.center+layout.right;n++){
+      const id=layout.row+n, st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
+      html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}</div>`;
+    }
+    const rightPad=maxRight-layout.right;
+    for(let i=0;i<rightPad;i++) html += '<div class="seat stair-empty"></div>';
+    html += '</div>';
+  });
   html += '</div></div>';
-  html += `<div class="legend">
-    <div class="item"><span class="swatch" style="background:var(--seat-free)"></span>Disponível</div>
-    <div class="item"><span class="swatch" style="background:var(--seat-sold)"></span>Vendido / Pago</div>
-    <div class="item"><span class="swatch" style="background:var(--seat-indisponivel)"></span>Indisponível (quebrada)</div>
-    <div class="item"><span class="swatch aluno-sw"></span>Reservado — alunos</div>
-  </div>`;
+  html += `<div class="legend"><div class="item"><span class="swatch" style="background:var(--seat-free)"></span>Disponível</div><div class="item"><span class="swatch" style="background:var(--seat-sold)"></span>Vendido / Pago</div><div class="item"><span class="swatch" style="background:var(--seat-indisponivel)"></span>Indisponível</div><div class="item"><span class="swatch aluno-sw"></span>Reservado — alunos</div></div>`;
   return html;
 }
 
 function computeSummary(seats){
   let livre=0, vendido=0, indisponivel=0, alunos=0;
-  const width = rowWidth();
-  for(let r=0;r<CONFIG.rows;r++){
-    for(let n=1;n<=width;n++){
-      const id = rowLetter(r)+n;
-      const st = seats[id] ? seats[id].status : defaultStatusFor(id);
+  for(let r=0;r<ROOM_LAYOUT.length;r++){
+    for(let n=1;n<=rowWidth(r);n++){
+      const id = seatIdFor(r,n);
+      const st = effectiveSeatStatus(seats, id);
       if(st==='vendido') vendido++;
       else if(st==='indisponivel') indisponivel++;
       else if(st==='aluno') alunos++;
       else livre++;
     }
   }
-  const sellable = livre + vendido + indisponivel;
+  const sellable = livre + vendido;
   return {sellable, livre, indisponivel, vendido, alunos};
 }
 
@@ -782,19 +851,14 @@ function renderShowReportHtml(box, show, r){
 
 let priceSelectedSeats = new Set();
 function renderPriceMap(){
-  const width = rowWidth();
-  let html = '<div class="seatmap price-map">';
-  for(let r=0;r<CONFIG.rows;r++){
-    html += `<div class="seat-row"><div class="row-label">${rowLetter(r)}</div>`;
-    for(let n=1;n<=width;n++){
+  let html = '<div class="seatmap price-map stair-seatmap">';
+  for(let r=0;r<ROOM_LAYOUT.length;r++){ const layout=roomRow(r); html += `<div class="seat-row stair-row"><div class="row-label">${layout.row}</div>`; const maxLeft=Math.max(...ROOM_LAYOUT.map(x=>x.left)); for(let i=0;i<maxLeft-layout.left;i++) html+='<div class="seat stair-empty"></div>'; for(let n=1;n<=rowWidth(r);n++){
       const id = rowLetter(r)+n;
       const price = (CONFIG.prices && CONFIG.prices[id]!=null) ? CONFIG.prices[id] : null;
       const sel = priceSelectedSeats.has(id) ? 'selected' : '';
       const noPrice = price==null ? 'no-price' : '';
       html += `<div class="seat price-seat ${sel} ${noPrice}" data-price-seat="${id}" title="${id}">${price!=null ? Math.round(price) : ''}</div>`;
-      if(n === CONFIG.seatsLeft || n === CONFIG.seatsLeft + CONFIG.seatsCenter){
-        html += `<div class="seat aisle-gap"></div>`;
-      }
+      if(n === layout.left || n === layout.left + layout.center){ html += '<div class="seat aisle-gap"></div>'; }
     }
     html += `</div>`;
   }
@@ -972,12 +1036,12 @@ function renderSelectionToolbar(){
   if(!selectionMode){ box.innerHTML = ''; return; }
   box.innerHTML = `<div class="sel-toolbar">
     <span>${selectedSeats.size} assento(s) selecionado(s)</span>
-    <button class="btn gold tiny" id="btnBulkVender" type="button" ${selectedSeats.size?'':'disabled'}>Marcar todos como Vendido</button>
-    <button class="btn ghost tiny" id="btnBulkImprimir" type="button" ${selectedSeats.size?'':'disabled'}>🖨️ Imprimir selecionados</button>
+    <button class="btn gold tiny" id="btnBulkStatus" type="button" ${selectedSeats.size?'':'disabled'}>Alterar status</button>
+    <button class="btn ghost tiny" id="btnBulkImprimir" type="button" ${selectedSeats.size?'':'disabled'}>🖨️ Imprimir vendidos selecionados</button>
     <button class="btn ghost tiny" id="btnBulkLimpar" type="button">Limpar seleção</button>
   </div>`;
-  const btnVender = document.getElementById('btnBulkVender');
-  if(btnVender) btnVender.addEventListener('click', openBulkSellModal);
+  const btnStatus = document.getElementById('btnBulkStatus');
+  if(btnStatus) btnStatus.addEventListener('click', openBulkStatusModal);
   const btnImprimir = document.getElementById('btnBulkImprimir');
   if(btnImprimir) btnImprimir.addEventListener('click', ()=>{
     printSelectedTickets(currentSessionId, Array.from(selectedSeats));
@@ -989,46 +1053,99 @@ function renderSelectionToolbar(){
   });
 }
 
-function openBulkSellModal(){
+function openBulkStatusModal(){
   if(!selectedSeats.size) return;
   const ids = Array.from(selectedSeats).sort();
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
   overlay.innerHTML = `<div class="modal">
-    <h3>Vender ${ids.length} assentos</h3>
+    <h3>Alterar ${ids.length} assentos</h3>
     <div class="sub">Assentos: ${ids.join(', ')}</div>
-    <p class="note" style="margin-top:-4px;">Preencha uma vez — os dados serão aplicados aos ${ids.length} assentos selecionados (mesmo comprador).</p>
-    <div class="field"><label>Nome do comprador</label><input id="bsNome" placeholder="Ex: Maria Silva"/></div>
-    <div class="field"><label>Telefone</label><input id="bsTel" placeholder="(00) 00000-0000"/></div>
-    <div class="field"><label>E-mail (para enviar o ingresso)</label><input id="bsEmail" type="email" placeholder="nome@exemplo.com"/></div>
-    <div class="field"><label>Observação</label><textarea id="bsObs" rows="2" placeholder="Combinado, forma de pagamento, etc."></textarea></div>
+    <div class="status-choices" style="margin-top:14px;">
+      <label><input type="radio" name="bulkSt" value="livre" checked><span>Livre</span></label>
+      <label><input type="radio" name="bulkSt" value="vendido"><span>Vendido</span></label>
+      <label><input type="radio" name="bulkSt" value="indisponivel"><span>Indisponível</span></label>
+      <label><input type="radio" name="bulkSt" value="aluno"><span>Aluno</span></label>
+    </div>
+    <div id="bulkBuyerFields" style="display:none;">
+      <p class="note" style="margin-top:-2px;">Os mesmos dados serão aplicados a todos os ingressos vendidos selecionados.</p>
+      <div class="field"><label>Nome do comprador</label><input id="bsNome" placeholder="Ex: Maria Silva"/></div>
+      <div class="field"><label>Telefone</label><input id="bsTel" placeholder="(00) 00000-0000"/></div>
+      <div class="field"><label>E-mail</label><input id="bsEmail" type="email" placeholder="nome@exemplo.com"/></div>
+      <div class="field"><label>Observação</label><textarea id="bsObs" rows="2" placeholder="Opcional"></textarea></div>
+    </div>
+    <p class="note" id="bulkStatusNote">Livre afeta somente a sessão selecionada. Indisponível é global e será aplicado a todos os espetáculos e sessões.</p>
     <div class="modal-actions" style="justify-content:flex-end;">
       <button class="btn ghost" id="bsCancelar">Cancelar</button>
-      <button class="btn gold" id="bsSalvar">Marcar como vendido</button>
+      <button class="btn gold" id="bsSalvar">Aplicar</button>
     </div>
   </div>`;
   document.body.appendChild(overlay);
-  overlay.querySelector('#bsCancelar').addEventListener('click', ()=> overlay.remove());
+  const buyerFields = overlay.querySelector('#bulkBuyerFields');
+  const note = overlay.querySelector('#bulkStatusNote');
+  overlay.querySelectorAll('input[name="bulkSt"]').forEach(r=>r.addEventListener('change', ()=>{
+    buyerFields.style.display = r.checked && r.value==='vendido' ? 'block' : 'none';
+    const st = overlay.querySelector('input[name="bulkSt"]:checked').value;
+    note.textContent = st==='indisponivel'
+      ? 'Indisponível é global: essas cadeiras ficarão indisponíveis em todos os espetáculos e sessões.'
+      : st==='aluno'
+        ? 'Aluno vale para esta sessão e não gera ingresso nem check-in.'
+        : 'Este status será aplicado à sessão selecionada.';
+  }));
+  overlay.querySelector('#bsCancelar').addEventListener('click', ()=>overlay.remove());
   overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
   overlay.querySelector('#bsSalvar').addEventListener('click', async ()=>{
-    const nome = overlay.querySelector('#bsNome').value.trim();
-    const telefone = overlay.querySelector('#bsTel').value.trim();
-    const email = overlay.querySelector('#bsEmail').value.trim();
-    const obs = overlay.querySelector('#bsObs').value.trim();
-    const updates = {};
-    const historyUpdates = {};
-    const now = Date.now();
-    ids.forEach(id=>{
-      updates['seats/'+currentSessionId+'/'+id] = { status:'vendido', nome, telefone, email, obs };
-      const hKey = db.ref('history/'+currentSessionId+'/'+id).push().key;
-      historyUpdates['history/'+currentSessionId+'/'+id+'/'+hKey] = { status:'vendido', nome, at:now, by:currentUser?currentUser.email:'?' };
-    });
-    try{ await db.ref().update({...updates, ...historyUpdates}); }
-    catch(e){ showToast('Erro ao salvar os assentos'); return; }
-    overlay.remove();
-    selectedSeats.clear();
-    showToast(ids.length + ' assentos marcados como vendidos');
-    renderPainel();
+    const status = overlay.querySelector('input[name="bulkSt"]:checked').value;
+    const nome = overlay.querySelector('#bsNome')?.value.trim() || '';
+    const telefone = overlay.querySelector('#bsTel')?.value.trim() || '';
+    const email = overlay.querySelector('#bsEmail')?.value.trim() || '';
+    const obs = overlay.querySelector('#bsObs')?.value.trim() || '';
+    const btn = overlay.querySelector('#bsSalvar');
+    btn.disabled = true;
+    try{
+      if(status==='indisponivel'){
+        const updates = {};
+        const now = Date.now();
+        ids.forEach(id=>{
+          updates['config/globalUnavailable/'+id] = true;
+          const hKey = db.ref('history/'+currentSessionId+'/'+id).push().key;
+          updates['history/'+currentSessionId+'/'+id+'/'+hKey] = {status:'indisponivel',nome:'',at:now,by:currentUser?currentUser.email:'?'};
+          CONFIG.globalUnavailable = CONFIG.globalUnavailable || {};
+          CONFIG.globalUnavailable[id] = true;
+        });
+        await db.ref().update(updates);
+      } else {
+        // Ao aplicar qualquer outro status, remove eventual indisponibilidade global dessas cadeiras.
+        const globalUpdates = {};
+        ids.forEach(id=>{
+          if(isGlobalUnavailable(id)){
+            globalUpdates['config/globalUnavailable/'+id] = null;
+            delete CONFIG.globalUnavailable[id];
+          }
+        });
+        if(Object.keys(globalUpdates).length) await db.ref().update(globalUpdates);
+        const updates = {};
+        const now = Date.now();
+        ids.forEach(id=>{
+          let data = null;
+          if(status==='vendido') data = {status:'vendido',nome,telefone,email,obs};
+          else if(status==='aluno') data = {status:'aluno',nome:'',telefone:'',email:'',obs:''};
+          else if(status!==defaultStatusFor(id)) data = {status:'livre',nome:'',telefone:'',email:'',obs:''};
+          updates['seats/'+currentSessionId+'/'+id] = data;
+          const hKey = db.ref('history/'+currentSessionId+'/'+id).push().key;
+          updates['history/'+currentSessionId+'/'+id+'/'+hKey] = {status:status,nome:status==='vendido'?nome:'',at:now,by:currentUser?currentUser.email:'?'};
+        });
+        await db.ref().update(updates);
+      }
+      reportCache = {};
+      overlay.remove();
+      selectedSeats.clear();
+      showToast(ids.length + ' assento(s) atualizados');
+      renderPainel();
+    }catch(e){
+      btn.disabled = false;
+      showToast('Erro ao atualizar os assentos');
+    }
   });
 }
 
@@ -1109,7 +1226,8 @@ async function doSearch(){
 
 async function openSeatModal(seatId){
   const seats = SEATS_CACHE[currentSessionId] || {};
-  const data = seats[seatId] || { status: defaultStatusFor(seatId), nome:'', telefone:'', obs:'' };
+  const localData = seats[seatId] || { status: defaultStatusFor(seatId), nome:'', telefone:'', email:'', obs:'' };
+  const data = Object.assign({}, localData, {status: effectiveSeatStatus(seats, seatId)});
   const show = CONFIG.shows.find(s=>s.id===currentShowId) || {sessions:[]};
   const session = show.sessions.find(se=>se.id===currentSessionId) || {};
   const price = (CONFIG.prices && CONFIG.prices[seatId]!=null) ? CONFIG.prices[seatId] : null;
@@ -1397,14 +1515,10 @@ function renderConfig(){
   <div class="panel">
     <h2>Configurações da sala</h2>
     <p class="note" style="margin-top:-8px;">O palco fica de frente para o público. Da esquerda para a direita: <b>Esquerda</b> · <b>Centro</b> · <b>Direita (reservado para alunos por padrão — dá pra liberar assento por assento no Painel)</b>.</p>
-    <div class="row" style="margin-top:12px;">
-      <div class="field"><label>Fileiras</label><input id="cfgRows" type="number" min="1" max="26" value="${CONFIG.rows}"/></div>
-      <div class="field"><label>Assentos — Esquerda</label><input id="cfgLeft" type="number" min="0" value="${CONFIG.seatsLeft}"/></div>
-      <div class="field"><label>Assentos — Centro</label><input id="cfgCenter" type="number" min="0" value="${CONFIG.seatsCenter}"/></div>
-      <div class="field"><label>Assentos — Direita (alunos)</label><input id="cfgRight" type="number" min="0" value="${CONFIG.seatsRight}"/></div>
+    <div class="room-layout-editor" style="margin-top:12px;overflow:auto;">
+      <table class="data-table"><thead><tr><th>Fileira</th><th>Esquerda</th><th>Centro</th><th>Direita / Alunos</th><th>Total</th></tr></thead><tbody>${ROOM_LAYOUT.map(x=>`<tr><td><strong>${x.row}</strong></td><td>${x.left}</td><td>${x.center}</td><td>${x.right}</td><td>${x.left+x.center+x.right}</td></tr>`).join('')}</tbody></table>
     </div>
-    <p class="note">Total por fileira: ${CONFIG.seatsLeft+CONFIG.seatsCenter+CONFIG.seatsRight} · Total da sala: ${CONFIG.rows*(CONFIG.seatsLeft+CONFIG.seatsCenter+CONFIG.seatsRight)} lugares (${CONFIG.rows*(CONFIG.seatsLeft+CONFIG.seatsCenter)} à venda + ${CONFIG.rows*CONFIG.seatsRight} para alunos por padrão).</p>
-    <button class="btn gold" id="btnSalvarSala" style="margin-top:6px;">Salvar sala</button>
+    <p class="note">Layout fixo: 12 fileiras (A–L), 15 lugares no centro. As laterais formam a escada; a direita é reservada para alunos por padrão.</p>
   </div>
 
   <div class="panel">
@@ -1441,16 +1555,6 @@ function renderConfig(){
   });
   document.getElementById('btnClearPriceSel').addEventListener('click', ()=>{
     priceSelectedSeats.clear();
-    renderConfig();
-  });
-
-  document.getElementById('btnSalvarSala').addEventListener('click', async ()=>{
-    CONFIG.rows = Math.max(1, parseInt(document.getElementById('cfgRows').value)||1);
-    CONFIG.seatsLeft = Math.max(0, parseInt(document.getElementById('cfgLeft').value)||0);
-    CONFIG.seatsCenter = Math.max(0, parseInt(document.getElementById('cfgCenter').value)||0);
-    CONFIG.seatsRight = Math.max(0, parseInt(document.getElementById('cfgRight').value)||0);
-    await saveConfig();
-    showToast('Sala atualizada');
     renderConfig();
   });
 
@@ -1780,7 +1884,9 @@ function renderSetupScreen(){
     return;
   }
   await loadConfig();
+  await migrateGlobalUnavailable();
   switchTab('publico');
+  attachGlobalUnavailableListener();
 })();
 </script>
 </body>
