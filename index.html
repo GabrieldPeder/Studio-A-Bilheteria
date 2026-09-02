@@ -365,7 +365,7 @@
     .ticket-footer{height:7px;background:linear-gradient(90deg,var(--ticket-deep),var(--ticket-accent),var(--ticket-soft));}
   }
 
-.stair-seatmap{min-width:fit-content}.stair-row{width:max-content;margin-left:auto;margin-right:auto}.stair-empty{visibility:hidden;pointer-events:none;background:transparent!important;border-color:transparent!important;box-shadow:none!important}.stair-row .seat{flex:0 0 34px}.stair-row .aisle-gap{flex:0 0 18px!important}.stair-row .row-label{flex:0 0 28px}</style>
+.stair-seatmap{min-width:fit-content}.stair-row{width:max-content;margin-left:auto;margin-right:auto}.stair-empty{visibility:hidden;pointer-events:none;background:transparent!important;border-color:transparent!important;box-shadow:none!important}.stair-row .seat{flex:0 0 20px}.stair-row .aisle-gap{flex:0 0 16px!important}.stair-row .row-label{flex:0 0 18px}</style>
 </head>
 <body>
 <div class="app">
@@ -716,6 +716,7 @@ function renderSeatMap(seats, readonly){
   ROOM_LAYOUT.forEach((layout,r)=>{
     html += `<div class="seat-row stair-row" data-row="${layout.row}"><div class="row-label">${layout.row}</div>`;
     const leftPad = maxLeft-layout.left;
+    const rightPad = maxRight-layout.right;
     for(let i=0;i<leftPad;i++) html += '<div class="seat stair-empty"></div>';
     for(let n=1;n<=layout.left;n++){
       const id=layout.row+n, st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
@@ -731,7 +732,6 @@ function renderSeatMap(seats, readonly){
       const id=layout.row+n, st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
       html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}</div>`;
     }
-    const rightPad=maxRight-layout.right;
     for(let i=0;i<rightPad;i++) html += '<div class="seat stair-empty"></div>';
     html += '</div>';
   });
@@ -852,7 +852,7 @@ function renderShowReportHtml(box, show, r){
 let priceSelectedSeats = new Set();
 function renderPriceMap(){
   let html = '<div class="seatmap price-map stair-seatmap">';
-  for(let r=0;r<ROOM_LAYOUT.length;r++){ const layout=roomRow(r); html += `<div class="seat-row stair-row"><div class="row-label">${layout.row}</div>`; const maxLeft=Math.max(...ROOM_LAYOUT.map(x=>x.left)); for(let i=0;i<maxLeft-layout.left;i++) html+='<div class="seat stair-empty"></div>'; for(let n=1;n<=rowWidth(r);n++){
+  for(let r=0;r<ROOM_LAYOUT.length;r++){ const layout=roomRow(r); html += `<div class="seat-row stair-row"><div class="row-label">${layout.row}</div>`; const maxLeft=Math.max(...ROOM_LAYOUT.map(x=>x.left)); const maxRight=Math.max(...ROOM_LAYOUT.map(x=>x.right)); for(let i=0;i<maxLeft-layout.left;i++) html+='<div class="seat stair-empty"></div>'; for(let n=1;n<=rowWidth(r);n++){
       const id = rowLetter(r)+n;
       const price = (CONFIG.prices && CONFIG.prices[id]!=null) ? CONFIG.prices[id] : null;
       const sel = priceSelectedSeats.has(id) ? 'selected' : '';
