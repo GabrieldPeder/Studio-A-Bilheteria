@@ -368,7 +368,7 @@
     .ticket-footer{height:7px;background:linear-gradient(90deg,var(--ticket-deep),var(--ticket-accent),var(--ticket-soft));}
   }
 
-.stair-seatmap{min-width:fit-content}.stair-row{width:max-content;margin-left:auto;margin-right:auto}.stair-empty{visibility:hidden;pointer-events:none;background:transparent!important;border-color:transparent!important;box-shadow:none!important}.stair-row .seat{flex:0 0 20px}.stair-row .aisle-gap{flex:0 0 16px!important}.stair-row .row-label{flex:0 0 18px}</style>
+.stair-seatmap{min-width:fit-content}.stair-row{width:max-content;margin-left:auto;margin-right:auto}.stair-row .left-block,.stair-row .center-block,.stair-row .right-block{display:flex;align-items:center;gap:6px}.stair-row .left-block{width:182px;justify-content:flex-end}.stair-row .center-block{width:384px;justify-content:center}.stair-row .right-block{width:200px;justify-content:flex-start}.stair-row .aisle-fixed{width:16px;flex:0 0 16px}.stair-empty{visibility:hidden;pointer-events:none;background:transparent!important;border-color:transparent!important;box-shadow:none!important}.stair-row .seat{flex:0 0 20px}.stair-row .row-label{flex:0 0 18px}.waitlist-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.waitlist-form-grid .field{min-width:0}@media(max-width:650px){.waitlist-form-grid{grid-template-columns:1fr}.stair-row .left-block{width:154px}.stair-row .center-block{width:324px}.stair-row .right-block{width:160px}.stair-row .aisle-fixed{width:10px;flex-basis:10px}}</style>
 </head>
 <body>
 <div class="app">
@@ -690,10 +690,10 @@ function statusLabel(st){
   return st==='vendido' ? 'Vendido' : st==='indisponivel' ? 'Indisponível' : 'Liberado';
 }
 
-/* ---------- Layout da sala — escada + numeração sequencial ---------- */
-// Quantidade física correta informada pelo Studio A.
-// A numeração dos assentos é GLOBAL e sequencial: A1...A19, B20... etc.
-// A última fileira (L) possui somente 8 lugares no bloco central.
+/* ---------- Layout da sala — escada fixa + numeração sequencial ---------- */
+// Layout físico informado pelo Studio A.
+// Cada fileira possui: lateral esquerda / bloco central / lateral direita.
+// O bloco central permanece SEMPRE centralizado; as laterais não o deslocam.
 const ROOM_LAYOUT = [
   {row:'A', left:2, center:15, right:2},
   {row:'B', left:3, center:15, right:3},
@@ -708,6 +708,8 @@ const ROOM_LAYOUT = [
   {row:'K', left:6, center:15, right:8},
   {row:'L', left:4, center:8, right:8}
 ];
+const MAX_LEFT_BLOCK = Math.max(...ROOM_LAYOUT.map(x=>x.left));
+const MAX_RIGHT_BLOCK = Math.max(...ROOM_LAYOUT.map(x=>x.right));
 function roomRow(r){ return ROOM_LAYOUT[r] || {row:rowLetter(r), left:7, center:15, right:8}; }
 function rowWidth(r){ const x=roomRow(r); return x.left+x.center+x.right; }
 function rowStart(r){ let n=1; for(let i=0;i<r;i++) n += rowWidth(i); return n; }
@@ -717,65 +719,169 @@ function seatColumn(seatId){ const m=seatId.match(/\d+$/); return m ? parseInt(m
 function seatRowLetter(seatId){ const m=seatId.match(/^[A-Z]+/); return m ? m[0] : ''; }
 function rowIndexFromSeatId(seatId){ const letter=seatRowLetter(seatId); return ROOM_LAYOUT.findIndex(x=>x.row===letter); }
 function localSeatNumberFromGlobal(seatId){ const r=rowIndexFromSeatId(seatId); const n=seatColumn(seatId); return r<0 ? 0 : n-rowStart(r)+1; }
-function blockOf(n, r){ const x=roomRow(r); const local=typeof n==='number' ? localSeatNumberFromGlobal(n) : 0; if(local<=x.left) return 'left'; if(local<=x.left+x.center) return 'center'; return 'right'; }
+function blockOf(seatId){ const r=rowIndexFromSeatId(seatId); const x=roomRow(r); const local=localSeatNumberFromGlobal(seatId); if(local<=x.left) return 'left'; if(local<=x.left+x.center) return 'center'; return 'right'; }
 function defaultStatusFor(seatId){ const r=rowIndexFromSeatId(seatId); if(r<0) return 'livre'; const x=roomRow(r); const local=localSeatNumberFromGlobal(seatId); return local>x.left+x.center ? 'aluno' : 'livre'; }
+// Numeração comercial: somente os lugares vendíveis recebem número.
+// Os assentos de aluno nunca recebem número; indisponíveis também não exibem número.
+// A numeração é estável e sequencial por fileira, sem renumerar os demais assentos
+// quando um lugar vendível é temporariamente marcado como indisponível.
+const SELLABLE_ROW_START = (()=>{
+  const starts=[]; let n=1;
+  ROOM_LAYOUT.forEach(x=>{ starts.push(n); n += x.left + x.center; });
+  return starts;
+})();
+const TOTAL_SELLABLE_SEATS = ROOM_LAYOUT.reduce((acc,x)=>acc+x.left+x.center,0);
+function sellableNumberForSeat(seatId){
+  const r=rowIndexFromSeatId(seatId);
+  if(r<0) return null;
+  const x=roomRow(r);
+  const local=localSeatNumberFromGlobal(seatId);
+  if(local<1 || local>x.left+x.center) return null;
+  return SELLABLE_ROW_START[r] + local - 1;
+}
+function displaySeatLabel(seatId, status){
+  if(status==='aluno' || status==='indisponivel') return '';
+  const n=sellableNumberForSeat(seatId);
+  const r=rowIndexFromSeatId(seatId);
+  return n==null || r<0 ? '' : roomRow(r).row+n;
+}
+function physicalSeatIdFromDisplayLabel(label){
+  const m=String(label||'').trim().toUpperCase().match(/^([A-Z]+)(\d+)$/);
+  if(!m) return null;
+  const r=ROOM_LAYOUT.findIndex(x=>x.row===m[1]);
+  const number=Number(m[2]);
+  if(r<0 || number<SELLABLE_ROW_START[r] || number>=SELLABLE_ROW_START[r]+roomRow(r).left+roomRow(r).center) return null;
+  const local=number-SELLABLE_ROW_START[r]+1;
+  return seatIdFor(r,local);
+}
 function seatIdsForRow(r){ const ids=[]; for(let n=1;n<=rowWidth(r);n++) ids.push(seatIdFor(r,n)); return ids; }
+function seatHtml(seats, readonly, r, local){
+  const id=seatIdFor(r,local), st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st;
+  const mark=st==='indisponivel'?'✕':'';
+  const who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'';
+  const label=displaySeatLabel(id,st);
+  const title=st==='aluno'?id+' — reservado para alunos':st==='indisponivel'?id+' — Indisponível':label+' — '+statusLabel(st)+who;
+  return `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}<small>${label}</small></div>`;
+}
 function renderSeatMap(seats, readonly){
-  const maxLeft = Math.max(...ROOM_LAYOUT.map(x=>x.left));
-  const maxRight = Math.max(...ROOM_LAYOUT.map(x=>x.right));
+  // Estrutura fixa: laterais em escada + corredores + bloco central com 15 posições visuais.
+  // A última fileira tem somente 8 cadeiras no centro, centralizadas dentro do espaço de 15.
+  // Assim, reduzir/aumentar as laterais nunca puxa o bloco central.
   let html = '<div class="stage-wrap"><div class="stage"><span>Palco</span></div><div class="seatmap stair-seatmap">';
   ROOM_LAYOUT.forEach((layout,r)=>{
-    html += `<div class="seat-row stair-row" data-row="${layout.row}"><div class="row-label">${layout.row}</div>`;
-    const leftPad = maxLeft-layout.left, rightPad=maxRight-layout.right;
-    for(let i=0;i<leftPad;i++) html += '<div class="seat stair-empty"></div>';
-    for(let n=1;n<=layout.left;n++){
-      const id=seatIdFor(r,n), st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
-      html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}<small>${id}</small></div>`;
+    html += `<div class="seat-row stair-row" data-row="${layout.row}"><div class="row-label">${layout.row}</div><div class="left-block">`;
+    for(let i=1;i<=MAX_LEFT_BLOCK;i++){
+      if(i > MAX_LEFT_BLOCK-layout.left) html += seatHtml(seats,readonly,r,i-(MAX_LEFT_BLOCK-layout.left));
+      else html += '<div class="seat stair-empty"></div>';
     }
-    html += '<div class="seat aisle-gap"></div>';
-    for(let n=layout.left+1;n<=layout.left+layout.center;n++){
-      const id=seatIdFor(r,n), st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
-      html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}<small>${id}</small></div>`;
+    html += '</div><div class="aisle-fixed"></div><div class="center-block">';
+    for(let n=layout.left+1;n<=layout.left+layout.center;n++) html += seatHtml(seats,readonly,r,n);
+    html += '</div><div class="aisle-fixed"></div><div class="right-block">';
+    for(let i=1;i<=MAX_RIGHT_BLOCK;i++){
+      if(i<=layout.right) html += seatHtml(seats,readonly,r,layout.left+layout.center+i-1);
+      else html += '<div class="seat stair-empty"></div>';
     }
-    html += '<div class="seat aisle-gap"></div>';
-    for(let n=layout.left+layout.center+1;n<=layout.left+layout.center+layout.right;n++){
-      const id=seatIdFor(r,n), st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
-      html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}<small>${id}</small></div>`;
-    }
-    for(let i=0;i<rightPad;i++) html += '<div class="seat stair-empty"></div>';
-    html += '</div>';
+    html += '</div></div>';
   });
   html += '</div></div>';
   html += `<div class="legend"><div class="item"><span class="swatch" style="background:var(--seat-free)"></span>Disponível</div><div class="item"><span class="swatch" style="background:var(--seat-sold)"></span>Vendido / Pago</div><div class="item"><span class="swatch" style="background:var(--seat-indisponivel)"></span>Indisponível</div><div class="item"><span class="swatch aluno-sw"></span>Reservado — alunos</div></div>`;
   return html;
 }
 
-async function migrateSequentialSeatNumbering(){
-  if(CONFIG._seatNumberingV2) return;
+async function migrateSeatLayoutV3(){
+  if(CONFIG._seatLayoutV3) return;
+  // A versão anterior desta tela usava 8 cadeiras no centro de TODAS as fileiras.
+  // O layout correto usa 15 no centro de A-K e 8 apenas em L. Reposicionamos
+  // a numeração global mantendo a posição física local de cada cadeira.
+  const previousLayout = [
+    {left:2, center:8, right:2},{left:3, center:8, right:3},{left:5, center:8, right:4},{left:6, center:8, right:5},
+    {left:7, center:8, right:8},{left:7, center:8, right:8},{left:7, center:8, right:8},{left:7, center:8, right:8},
+    {left:7, center:8, right:8},{left:6, center:8, right:8},{left:6, center:8, right:8},{left:4, center:8, right:8}
+  ];
   const sessions=[]; (CONFIG.shows||[]).forEach(show=>(show.sessions||[]).forEach(se=>sessions.push(se.id)));
+  const prevStart=r=>{ let n=1; for(let i=0;i<r;i++) n += previousLayout[i].left+previousLayout[i].center+previousLayout[i].right; return n; };
+  const prevWidth=r=>previousLayout[r].left+previousLayout[r].center+previousLayout[r].right;
+  const newStart=r=>rowStart(r);
+  const updates={};
   try{
+    const snaps=await Promise.all(sessions.map(id=>db.ref('seats/'+id).once('value')));
+    snaps.forEach((snap,si)=>{
+      const seats=snap.val()||{}, sessionId=sessions[si];
+      Object.entries(seats).forEach(([oldId,data])=>{
+        const m=oldId.match(/^([A-Z]+)(\d+)$/); if(!m) return;
+        const r=ROOM_LAYOUT.findIndex(x=>x.row===m[1]); if(r<0) return;
+        const globalOld=Number(m[2]);
+        const start=prevStart(r), local=globalOld-start+1;
+        if(local<1 || local>prevWidth(r)) return;
+        const newId=ROOM_LAYOUT[r].row+(newStart(r)+local-1);
+        if(newId!==oldId){ updates['seats/'+sessionId+'/'+newId]=data; updates['seats/'+sessionId+'/'+oldId]=null; }
+      });
+    });
+    Object.keys(CONFIG.globalUnavailable||{}).forEach(oldId=>{
+      const m=oldId.match(/^([A-Z]+)(\d+)$/); if(!m) return;
+      const r=ROOM_LAYOUT.findIndex(x=>x.row===m[1]); if(r<0) return;
+      const local=Number(m[2])-prevStart(r)+1;
+      if(local>=1 && local<=prevWidth(r)){
+        const newId=ROOM_LAYOUT[r].row+(newStart(r)+local-1);
+        if(newId!==oldId){ updates['config/globalUnavailable/'+newId]=true; updates['config/globalUnavailable/'+oldId]=null; }
+      }
+    });
+    updates['config/_seatLayoutV3']=true;
+    await db.ref().update(updates);
+    CONFIG._seatLayoutV3=true;
+    Object.keys(SEATS_CACHE).forEach(k=>delete SEATS_CACHE[k]);
+  }catch(e){ console.warn('Migração do layout V3 não concluída',e); }
+}
+
+async function migrateSequentialSeatNumbering(){
+  if(CONFIG._seatNumberingV3) return;
+  const sessions=[]; (CONFIG.shows||[]).forEach(show=>(show.sessions||[]).forEach(se=>sessions.push(se.id)));
+  // Layout anterior usado na numeração V2: 15 no centro e 8 à direita.
+  const OLD_LAYOUT = [
+    {row:'A',left:2,center:15,right:2},{row:'B',left:3,center:15,right:3},{row:'C',left:5,center:15,right:4},
+    {row:'D',left:6,center:15,right:5},{row:'E',left:7,center:15,right:8},{row:'F',left:7,center:15,right:8},
+    {row:'G',left:7,center:15,right:8},{row:'H',left:7,center:15,right:8},{row:'I',left:7,center:15,right:8},
+    {row:'J',left:6,center:15,right:8},{row:'K',left:6,center:15,right:8},{row:'L',left:4,center:8,right:8}
+  ];
+  const oldWidth=r=>OLD_LAYOUT[r].left+OLD_LAYOUT[r].center+OLD_LAYOUT[r].right;
+  const oldStart=r=>{let n=1;for(let i=0;i<r;i++)n+=oldWidth(i);return n;};
+  const newFromOldId=(id, v2)=>{
+    const m=id.match(/^([A-Z]+)(\d+)$/); if(!m) return null;
+    const r=ROOM_LAYOUT.findIndex(x=>x.row===m[1]); if(r<0) return null;
+    const raw=Number(m[2]); let local;
+    if(v2){
+      // V2 era global: A1...A19, B20..., etc.
+      if(raw<oldStart(r) || raw>oldStart(r)+oldWidth(r)-1) return null;
+      local=raw-oldStart(r)+1;
+    }else{
+      // Versões anteriores ao V2 eram locais: A1...A19, B1...B21, etc.
+      local=raw;
+    }
+    if(local<1 || local>rowWidth(r)) return null;
+    return seatIdFor(r,local);
+  };
+  try{
+    const wasV2=!!CONFIG._seatNumberingV2;
     const snaps=await Promise.all(sessions.map(id=>db.ref('seats/'+id).once('value')));
     const updates={};
     snaps.forEach((snap,si)=>{
       const seats=snap.val()||{}, sessionId=sessions[si];
       Object.entries(seats).forEach(([oldId,data])=>{
-        const m=oldId.match(/^([A-Z]+)(\d+)$/); if(!m) return;
-        const r=ROOM_LAYOUT.findIndex(x=>x.row===m[1]); const oldLocal=Number(m[2]);
-        if(r<0 || oldLocal<1 || oldLocal>rowWidth(r)) return;
-        // Arquivos antigos usavam A1, A2... por fileira; converter para numeração global.
-        const newId=seatIdFor(r,oldLocal);
-        if(newId!==oldId){ updates['seats/'+sessionId+'/'+newId]=data; updates['seats/'+sessionId+'/'+oldId]=null; }
+        const newId=newFromOldId(oldId,wasV2);
+        if(!newId || newId===oldId) return;
+        // Se o novo ID já possui dados, não sobrescreve; apenas remove o ID antigo.
+        if(!seats[newId]) updates['seats/'+sessionId+'/'+newId]=data;
+        updates['seats/'+sessionId+'/'+oldId]=null;
       });
     });
     const gu=CONFIG.globalUnavailable||{};
     Object.keys(gu).forEach(oldId=>{
-      const m=oldId.match(/^([A-Z]+)(\d+)$/); if(!m) return;
-      const r=ROOM_LAYOUT.findIndex(x=>x.row===m[1]); const local=Number(m[2]);
-      if(r>=0 && local>=1 && local<=rowWidth(r)) { const newId=seatIdFor(r,local); if(newId!==oldId){ updates['config/globalUnavailable/'+newId]=true; updates['config/globalUnavailable/'+oldId]=null; } }
+      const newId=newFromOldId(oldId,wasV2);
+      if(newId && newId!==oldId){ updates['config/globalUnavailable/'+newId]=true; updates['config/globalUnavailable/'+oldId]=null; }
     });
-    updates['config/_seatNumberingV2']=true;
+    updates['config/_seatNumberingV3']=true;
     await db.ref().update(updates);
-    CONFIG._seatNumberingV2=true;
+    CONFIG._seatNumberingV3=true;
   }catch(e){ console.warn('Migração da numeração não concluída',e); }
 }
 
@@ -836,7 +942,7 @@ async function getShowReport(show){
     const sum = computeSummary(seats);
     // Alunos não fazem parte da lotação comercial.
     // Lugares indisponíveis também não são vendíveis.
-    totalPlaces += sum.sellable - sum.indisponivel;
+    totalPlaces += sum.sellable;
     Object.entries(seats).forEach(([id,d])=>{
       if(d && d.status==='vendido'){
         sold++;
@@ -891,15 +997,21 @@ function renderShowReportHtml(box, show, r){
 let priceSelectedSeats = new Set();
 function renderPriceMap(){
   let html = '<div class="seatmap price-map stair-seatmap">';
-  for(let r=0;r<ROOM_LAYOUT.length;r++){ const layout=roomRow(r); html += `<div class="seat-row stair-row"><div class="row-label">${layout.row}</div>`; const maxLeft=Math.max(...ROOM_LAYOUT.map(x=>x.left)); const maxRight=Math.max(...ROOM_LAYOUT.map(x=>x.right)); for(let i=0;i<maxLeft-layout.left;i++) html+='<div class="seat stair-empty"></div>'; for(let n=1;n<=rowWidth(r);n++){
-      const id = rowLetter(r)+n;
-      const price = (CONFIG.prices && CONFIG.prices[id]!=null) ? CONFIG.prices[id] : null;
-      const sel = priceSelectedSeats.has(id) ? 'selected' : '';
-      const noPrice = price==null ? 'no-price' : '';
-      html += `<div class="seat price-seat ${sel} ${noPrice}" data-price-seat="${id}" title="${id}">${price!=null ? Math.round(price) : ''}</div>`;
-      if(n === layout.left || n === layout.left + layout.center){ html += '<div class="seat aisle-gap"></div>'; }
+  for(let r=0;r<ROOM_LAYOUT.length;r++){
+    const layout=roomRow(r);
+    html += `<div class="seat-row stair-row"><div class="row-label">${layout.row}</div><div class="left-block">`;
+    for(let i=1;i<=MAX_LEFT_BLOCK;i++){
+      if(i > MAX_LEFT_BLOCK-layout.left){ const local=i-(MAX_LEFT_BLOCK-layout.left); const id=seatIdFor(r,local); const price=(CONFIG.prices&&CONFIG.prices[id]!=null)?CONFIG.prices[id]:null; const sel=priceSelectedSeats.has(id)?'selected':''; const noPrice=price==null?'no-price':''; html+=`<div class="seat price-seat ${sel} ${noPrice}" data-price-seat="${id}" title="${id}">${price!=null?Math.round(price):''}</div>`; }
+      else html+='<div class="seat stair-empty"></div>';
     }
-    html += `</div>`;
+    html += '</div><div class="aisle-fixed"></div><div class="center-block">';
+    for(let n=layout.left+1;n<=layout.left+layout.center;n++){ const id=seatIdFor(r,n); const price=(CONFIG.prices&&CONFIG.prices[id]!=null)?CONFIG.prices[id]:null; const sel=priceSelectedSeats.has(id)?'selected':''; const noPrice=price==null?'no-price':''; html+=`<div class="seat price-seat ${sel} ${noPrice}" data-price-seat="${id}" title="${id}">${price!=null?Math.round(price):''}</div>`; }
+    html += '</div><div class="aisle-fixed"></div><div class="right-block">';
+    for(let i=1;i<=MAX_RIGHT_BLOCK;i++){
+      if(i<=layout.right){ const local=layout.left+layout.center+i-1; const id=seatIdFor(r,local); const price=(CONFIG.prices&&CONFIG.prices[id]!=null)?CONFIG.prices[id]:null; const sel=priceSelectedSeats.has(id)?'selected':''; const noPrice=price==null?'no-price':''; html+=`<div class="seat price-seat ${sel} ${noPrice}" data-price-seat="${id}" title="${id}">${price!=null?Math.round(price):''}</div>`; }
+      else html+='<div class="seat stair-empty"></div>';
+    }
+    html += '</div></div>';
   }
   html += '</div>';
   return html;
@@ -1132,7 +1244,7 @@ function openBulkStatusModal(){
         : 'Este status será aplicado à sessão selecionada.';
   }));
   overlay.querySelector('#bsCancelar').addEventListener('click', ()=>overlay.remove());
-  overlay.addEventListener('click', e=>{ if(e.target===overlay){ if(waitHandler) waitRef.off('value',waitHandler); overlay.remove(); } });
+  overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
   overlay.querySelector('#bsSalvar').addEventListener('click', async ()=>{
     const status = overlay.querySelector('input[name="bulkSt"]:checked').value;
     const nome = overlay.querySelector('#bsNome')?.value.trim() || '';
@@ -1183,7 +1295,7 @@ function openBulkStatusModal(){
       renderPainel();
     }catch(e){
       btn.disabled = false;
-      showToast('Erro ao atualizar os assentos');
+      showToast('Erro ao atualizar os assentos: ' + (e.code || e.message || 'verifique as permissões do Firebase'));
     }
   });
 }
@@ -1192,54 +1304,55 @@ async function openWaitlistModal(sessionId){
   const found = findShowAndSession(sessionId);
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
-  overlay.innerHTML = `<div class="modal" style="max-width:420px;">
+  overlay.innerHTML = `<div class="modal" style="max-width:520px;">
     <h3>Lista de espera</h3>
     <div class="sub">${found ? escapeHtml(found.show.name)+' — '+escapeHtml(sessionLabel(found.session)) : ''}</div>
-    <p class="note" style="margin-top:-8px;">Cada aluno tem direito a 4 ingressos. Se pedir mais, anote aqui quantos a mais ela quer, caso sobre.</p>
-    <div class="field"><label>Nome</label><input id="weNome" placeholder="Nome do aluno/responsável"/></div>
-    <div class="field"><label>Telefone</label><input id="weTel" placeholder="(00) 00000-0000"/></div>
-    <div class="field"><label>Quantos ingressos a mais quer</label><input id="weQtd" type="number" min="1" value="1"/></div>
-    <div class="field"><label>Observação</label><input id="weObs" placeholder="Opcional"/></div>
-    <button class="btn gold" id="btnAddWaitlist" style="width:100%; margin-bottom:16px;">+ Adicionar à lista</button>
-    <div id="waitlistItems"><div class="empty">Carregando…</div></div>
-    <div class="modal-actions" style="justify-content:flex-end;">
-      <button class="btn ghost" id="btnFecharWaitlist">Fechar</button>
+    <p class="note" style="margin-top:-8px;">Cada aluno tem direito a 4 ingressos. Registre aqui pedidos adicionais.</p>
+    <div class="waitlist-form-grid">
+      <div class="field"><label>Nome</label><input id="weNome" placeholder="Nome do aluno/responsável"/></div>
+      <div class="field"><label>Telefone</label><input id="weTel" placeholder="(00) 00000-0000"/></div>
+      <div class="field"><label>Ingressos adicionais</label><input id="weQtd" type="number" min="1" value="1"/></div>
+      <div class="field"><label>Observação</label><input id="weObs" placeholder="Opcional"/></div>
     </div>
+    <button class="btn gold" id="btnAddWaitlist" style="width:100%; margin:10px 0 16px;">+ Adicionar à lista</button>
+    <div id="waitlistStatus" class="note"></div>
+    <div id="waitlistItems"><div class="empty">Carregando lista de espera…</div></div>
+    <div class="modal-actions" style="justify-content:flex-end;"><button class="btn ghost" id="btnFecharWaitlist">Fechar</button></div>
   </div>`;
   document.body.appendChild(overlay);
-  overlay.querySelector('#btnFecharWaitlist').addEventListener('click', ()=>{ if(waitHandler) waitRef.off('value',waitHandler); overlay.remove(); });
-  overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
-
-  const itemsBox = overlay.querySelector('#waitlistItems');
-  const waitRef = db.ref('waitlist/'+sessionId);
-  let waitHandler = null;
-  async function renderWaitlistValue(val){
+  const itemsBox=overlay.querySelector('#waitlistItems');
+  const statusBox=overlay.querySelector('#waitlistStatus');
+  const waitRef=db.ref('waitlist/'+sessionId);
+  let active=true;
+  const renderEntries=(val)=>{
+    const entries=Object.entries(val||{}).sort((a,b)=>Number(a[1]?.at||0)-Number(b[1]?.at||0));
+    if(!entries.length){itemsBox.innerHTML='<div class="empty">Ninguém na lista de espera ainda.</div>';return;}
+    itemsBox.innerHTML='<div class="found-list">'+entries.map(([key,e],i)=>`<div class="found-item"><span><b>#${i+1} ${escapeHtml(e.nome||'Sem nome')}</b>${e.telefone?' · '+escapeHtml(e.telefone):''} — quer +${Number(e.quantidade)||1}${e.obs?' · '+escapeHtml(e.obs):''}</span><button class="btn danger tiny" data-remove-wait="${key}">Remover</button></div>`).join('')+'</div>';
+    itemsBox.querySelectorAll('[data-remove-wait]').forEach(btn=>btn.addEventListener('click',async()=>{
+      btn.disabled=true;
+      try{await waitRef.child(btn.dataset.removeWait).remove();}catch(e){btn.disabled=false;showToast('Não foi possível remover da fila: '+(e.code||e.message||'verifique o Firebase'));}
+    }));
+  };
+  const onValue=snap=>{if(active)renderEntries(snap.val()||{});};
+  const onError=err=>{itemsBox.innerHTML='<div class="empty">Não foi possível carregar a fila de espera. '+escapeHtml(err?.message||'Verifique as regras do Firebase.')+'</div>';};
+  waitRef.on('value',onValue,onError);
+  const close=()=>{if(!active)return;active=false;waitRef.off('value',onValue);overlay.remove();};
+  overlay.querySelector('#btnFecharWaitlist').addEventListener('click',close);
+  overlay.addEventListener('click',e=>{if(e.target===overlay)close();});
+  overlay.querySelector('#btnAddWaitlist').addEventListener('click',async()=>{
+    const nome=overlay.querySelector('#weNome').value.trim();
+    const telefone=overlay.querySelector('#weTel').value.trim();
+    const quantidade=Math.max(1,parseInt(overlay.querySelector('#weQtd').value)||1);
+    const obs=overlay.querySelector('#weObs').value.trim();
+    const btn=overlay.querySelector('#btnAddWaitlist');
+    if(!nome){showToast('Preencha o nome');return;}
+    btn.disabled=true;
     try{
-      const entries = Object.entries(val || {}).sort((a,b)=> Number(a[1]?.at||0) - Number(b[1]?.at||0));
-      if(!entries.length){ itemsBox.innerHTML = '<div class="empty">Ninguém na lista de espera ainda.</div>'; return; }
-      itemsBox.innerHTML = '<div class="found-list">' + entries.map(([key,e])=>`<div class="found-item"><span><b>${escapeHtml(e.nome||'Sem nome')}</b>${e.telefone?(' · '+escapeHtml(e.telefone)):''} — quer +${Number(e.quantidade)||1}${e.obs?(' · '+escapeHtml(e.obs)):''}</span><button class="btn danger tiny" data-remove-wait="${key}">Remover</button></div>`).join('') + '</div>';
-      itemsBox.querySelectorAll('[data-remove-wait]').forEach(btn=>btn.addEventListener('click', async ()=>{
-        btn.disabled=true; try{ await waitRef.child(btn.dataset.removeWait).remove(); }catch(e){ btn.disabled=false; showToast('Não foi possível remover da fila'); }
-      }));
-    }catch(e){ itemsBox.innerHTML='<div class="empty">Erro ao renderizar a fila de espera.</div>'; }
-  }
-  waitHandler = snap=>renderWaitlistValue(snap.val()||{});
-  waitRef.on('value', waitHandler, err=>{ itemsBox.innerHTML='<div class="empty">Não foi possível carregar a fila de espera. Verifique as regras de acesso do Firebase.</div>'; });
-  overlay.addEventListener('remove', ()=>waitRef.off('value',waitHandler));
-
-  overlay.querySelector('#btnAddWaitlist').addEventListener('click', async ()=>{
-    const nome = overlay.querySelector('#weNome').value.trim();
-    const telefone = overlay.querySelector('#weTel').value.trim();
-    const quantidade = Math.max(1, parseInt(overlay.querySelector('#weQtd').value)||1);
-    const obs = overlay.querySelector('#weObs').value.trim();
-    if(!nome){ showToast('Preencha o nome'); return; }
-    await db.ref('waitlist/'+sessionId).push({ nome, telefone, quantidade, obs, at: Date.now(), by: currentUser?currentUser.email:'?' });
-    overlay.querySelector('#weNome').value = '';
-    overlay.querySelector('#weTel').value = '';
-    overlay.querySelector('#weQtd').value = '1';
-    overlay.querySelector('#weObs').value = '';
-    refreshWaitlist();
-    showToast('Adicionado à lista de espera');
+      await waitRef.push({nome,telefone,quantidade,obs,at:Date.now(),by:currentUser?currentUser.email:'?'});
+      overlay.querySelector('#weNome').value=''; overlay.querySelector('#weTel').value=''; overlay.querySelector('#weQtd').value='1'; overlay.querySelector('#weObs').value='';
+      statusBox.textContent='Adicionado à fila.';
+    }catch(e){showToast('Não foi possível adicionar à fila: '+(e.code||e.message||'verifique as permissões do Firebase'));}
+    finally{btn.disabled=false;}
   });
 }
 
@@ -1368,7 +1481,8 @@ async function openSeatModal(seatId){
 
 /* ---------- Ingresso (imprimir / e-mail) ---------- */
 function ticketCode(sessionId, seatId){
-  return sessionId+'-'+seatId;
+  const label = displaySeatLabel(seatId, 'vendido') || seatId;
+  return sessionId+'-'+label;
 }
 function findShowAndSession(sessionId){
   for(const show of CONFIG.shows){
@@ -1400,7 +1514,7 @@ function buildTicketHtml({seatId, show, session, nome, status}){
           <div class="ticket-info"><small>Data</small><strong>${dateText}</strong></div>
           <div class="ticket-info"><small>Horário</small><strong>${escapeHtml(timeText)}</strong></div>
           <div class="ticket-info"><small>Sessão</small><strong>${escapeHtml(sessionLabel(session))}</strong></div>
-          <div class="ticket-info seat"><small>Assento</small><strong>${escapeHtml(seatId)}</strong></div>
+          <div class="ticket-info seat"><small>Assento</small><strong>${escapeHtml(displaySeatLabel(seatId, status)||seatId)}</strong></div>
         </div>
         <p class="ticket-person">Ingresso de <b>${escapeHtml(nome||'Visitante')}</b></p>
         <div class="ticket-bottom">
@@ -1798,7 +1912,8 @@ async function handleScannedText(text){
   // Os IDs internos das sessões são mantidos como foram salvos no Firebase.
   const rawSessionId = code.slice(0, idx).trim();
   const sessionId = rawSessionId.toLowerCase();
-  const seatId = code.slice(idx+1).trim().toUpperCase();
+  const rawSeatLabel = code.slice(idx+1).trim().toUpperCase();
+  const seatId = physicalSeatIdFromDisplayLabel(rawSeatLabel) || rawSeatLabel;
   const found = findShowAndSession(sessionId);
   if(!found){
     resultBox.innerHTML = `<div class="scan-banner invalid">❌ Sessão não encontrada — pode ser de outro evento</div>`;
@@ -1811,22 +1926,25 @@ async function handleScannedText(text){
   }catch(e){ seat = null; }
 
   if(!seat || seat.status!=='vendido'){
+    const shownSeat = displaySeatLabel(seatId, seat && seat.status ? seat.status : 'vendido') || rawSeatLabel || seatId;
     const msg = seat && seat.status==='aluno'
-      ? `🎓 Assento ${seatId} é reservado para aluno e não possui ingresso/check-in.`
-      : `❌ Assento ${seatId} não consta como vendido`;
+      ? `🎓 Assento ${shownSeat} é reservado para aluno e não possui ingresso/check-in.`
+      : `❌ Assento ${shownSeat} não consta como vendido`;
     resultBox.innerHTML = `<div class="scan-banner invalid">${msg}</div>`;
     addCheckinLog(seatId, found, null, 'invalido');
     return;
   }
   if(seat.checkin){
     const hora = new Date(seat.checkinAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-    resultBox.innerHTML = `<div class="scan-banner warn">⚠️ Já tinha dado entrada às ${hora} — ${escapeHtml(seat.nome||'')} — Assento ${seatId}</div>`;
+    const shownSeat = displaySeatLabel(seatId, seat.status) || rawSeatLabel || seatId;
+    resultBox.innerHTML = `<div class="scan-banner warn">⚠️ Já tinha dado entrada às ${hora} — ${escapeHtml(seat.nome||'')} — Assento ${shownSeat}</div>`;
     addCheckinLog(seatId, found, seat, 'repetido');
     return;
   }
   const updated = Object.assign({}, seat, { checkin:true, checkinAt: Date.now() });
   await db.ref('seats/'+sessionId+'/'+seatId).set(updated);
-  resultBox.innerHTML = `<div class="scan-banner ok">✅ Entrada confirmada — ${escapeHtml(seat.nome||'')} — Assento ${seatId} — ${escapeHtml(found.show.name)}</div>`;
+  const shownSeat = displaySeatLabel(seatId, seat.status) || rawSeatLabel || seatId;
+  resultBox.innerHTML = `<div class="scan-banner ok">✅ Entrada confirmada — ${escapeHtml(seat.nome||'')} — Assento ${shownSeat} — ${escapeHtml(found.show.name)}</div>`;
   addCheckinLog(seatId, found, updated, 'ok');
 }
 
@@ -1834,7 +1952,8 @@ const checkinLogEntries = [];
 function addCheckinLog(seatId, found, seat, kind){
   const log = document.getElementById('checkinLog');
   if(!log) return;
-  checkinLogEntries.unshift({ time: new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}), seatId, showName: found.show.name, nome: seat ? seat.nome : '', kind });
+  const shownSeat = displaySeatLabel(seatId, seat && seat.status ? seat.status : 'vendido') || seatId;
+  checkinLogEntries.unshift({ time: new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}), seatId: shownSeat, showName: found.show.name, nome: seat ? seat.nome : '', kind });
   log.innerHTML = '<div class="found-list">' + checkinLogEntries.slice(0,15).map(e=>
     `<div class="found-item"><span>${e.time} — Assento <b>${e.seatId}</b> — ${escapeHtml(e.nome||'—')} (${escapeHtml(e.showName)})</span><span class="badge ${e.kind==='ok'?'vendido':'indisponivel'}">${e.kind==='ok'?'entrou':e.kind==='repetido'?'repetido':'inválido'}</span></div>`
   ).join('') + '</div>';
