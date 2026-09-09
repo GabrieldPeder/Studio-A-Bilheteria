@@ -14,6 +14,7 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <style>
   :root{
     --bg: #0c0a0d;
@@ -101,6 +102,8 @@
     background:var(--seat-free); cursor:pointer; font-size:8px; color:transparent;
     transition:.12s; flex:0 0 auto;
   }
+  .seat small{font-size:5.5px;color:rgba(255,255,255,.68);display:block;text-align:center;line-height:18px;white-space:nowrap;pointer-events:none;}
+  .seat.vendido small,.seat.aluno small{color:rgba(255,255,255,.82);}
   .seat.aisle-gap{background:transparent; border:none; cursor:default; width:16px;}
   .seat:hover:not(.aisle-gap):not(.readonly){background:var(--seat-free-hover); transform:translateY(-1px);}
   .seat.reservado{background:var(--seat-reserved);}
@@ -468,6 +471,7 @@ function renderLoginScreen(){
    Como conseguir: dashboard.emailjs.com → criar conta grátis →
    Email Services > conectar seu Gmail (Service ID) →
    Email Templates > criar um template (Template ID) →
+   No template, em Attachments, adicione Variable Attachment com Parameter Name: ticket_pdf.
    Account > General > Public Key.
    ========================================================= */
 const emailjsConfig = {
@@ -686,7 +690,10 @@ function statusLabel(st){
   return st==='vendido' ? 'Vendido' : st==='indisponivel' ? 'Indisponível' : 'Liberado';
 }
 
-/* ---------- Layout da sala — laterais em escada ---------- */
+/* ---------- Layout da sala — escada + numeração sequencial ---------- */
+// Quantidade física correta informada pelo Studio A.
+// A numeração dos assentos é GLOBAL e sequencial: A1...A19, B20... etc.
+// A última fileira (L) possui somente 8 lugares no bloco central.
 const ROOM_LAYOUT = [
   {row:'A', left:2, center:15, right:2},
   {row:'B', left:3, center:15, right:3},
@@ -699,38 +706,41 @@ const ROOM_LAYOUT = [
   {row:'I', left:7, center:15, right:8},
   {row:'J', left:6, center:15, right:8},
   {row:'K', left:6, center:15, right:8},
-  {row:'L', left:4, center:15, right:8}
+  {row:'L', left:4, center:8, right:8}
 ];
 function roomRow(r){ return ROOM_LAYOUT[r] || {row:rowLetter(r), left:7, center:15, right:8}; }
 function rowWidth(r){ const x=roomRow(r); return x.left+x.center+x.right; }
-function blockOf(n, r){ const x=roomRow(r); if(n<=x.left) return 'left'; if(n<=x.left+x.center) return 'center'; return 'right'; }
-function seatColumn(seatId){ const m=seatId.match(/\d+$/); return m ? parseInt(m[0],10) : 1; }
+function rowStart(r){ let n=1; for(let i=0;i<r;i++) n += rowWidth(i); return n; }
+function oldSeatIdFor(r,n){ return roomRow(r).row+n; }
+function seatIdFor(r,n){ return roomRow(r).row+(rowStart(r)+n-1); }
+function seatColumn(seatId){ const m=seatId.match(/\d+$/); return m ? parseInt(m[0],10) : 0; }
 function seatRowLetter(seatId){ const m=seatId.match(/^[A-Z]+/); return m ? m[0] : ''; }
 function rowIndexFromSeatId(seatId){ const letter=seatRowLetter(seatId); return ROOM_LAYOUT.findIndex(x=>x.row===letter); }
-function defaultStatusFor(seatId){ const r=rowIndexFromSeatId(seatId); return blockOf(seatColumn(seatId), r) === 'right' ? 'aluno' : 'livre'; }
-function seatIdFor(r,n){ return roomRow(r).row+n; }
+function localSeatNumberFromGlobal(seatId){ const r=rowIndexFromSeatId(seatId); const n=seatColumn(seatId); return r<0 ? 0 : n-rowStart(r)+1; }
+function blockOf(n, r){ const x=roomRow(r); const local=typeof n==='number' ? localSeatNumberFromGlobal(n) : 0; if(local<=x.left) return 'left'; if(local<=x.left+x.center) return 'center'; return 'right'; }
+function defaultStatusFor(seatId){ const r=rowIndexFromSeatId(seatId); if(r<0) return 'livre'; const x=roomRow(r); const local=localSeatNumberFromGlobal(seatId); return local>x.left+x.center ? 'aluno' : 'livre'; }
+function seatIdsForRow(r){ const ids=[]; for(let n=1;n<=rowWidth(r);n++) ids.push(seatIdFor(r,n)); return ids; }
 function renderSeatMap(seats, readonly){
   const maxLeft = Math.max(...ROOM_LAYOUT.map(x=>x.left));
   const maxRight = Math.max(...ROOM_LAYOUT.map(x=>x.right));
   let html = '<div class="stage-wrap"><div class="stage"><span>Palco</span></div><div class="seatmap stair-seatmap">';
   ROOM_LAYOUT.forEach((layout,r)=>{
     html += `<div class="seat-row stair-row" data-row="${layout.row}"><div class="row-label">${layout.row}</div>`;
-    const leftPad = maxLeft-layout.left;
-    const rightPad = maxRight-layout.right;
+    const leftPad = maxLeft-layout.left, rightPad=maxRight-layout.right;
     for(let i=0;i<leftPad;i++) html += '<div class="seat stair-empty"></div>';
     for(let n=1;n<=layout.left;n++){
-      const id=layout.row+n, st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
-      html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}</div>`;
+      const id=seatIdFor(r,n), st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
+      html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}<small>${id}</small></div>`;
     }
     html += '<div class="seat aisle-gap"></div>';
     for(let n=layout.left+1;n<=layout.left+layout.center;n++){
-      const id=layout.row+n, st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
-      html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}</div>`;
+      const id=seatIdFor(r,n), st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
+      html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}<small>${id}</small></div>`;
     }
     html += '<div class="seat aisle-gap"></div>';
     for(let n=layout.left+layout.center+1;n<=layout.left+layout.center+layout.right;n++){
-      const id=layout.row+n, st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
-      html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}</div>`;
+      const id=seatIdFor(r,n), st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
+      html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}<small>${id}</small></div>`;
     }
     for(let i=0;i<rightPad;i++) html += '<div class="seat stair-empty"></div>';
     html += '</div>';
@@ -738,6 +748,35 @@ function renderSeatMap(seats, readonly){
   html += '</div></div>';
   html += `<div class="legend"><div class="item"><span class="swatch" style="background:var(--seat-free)"></span>Disponível</div><div class="item"><span class="swatch" style="background:var(--seat-sold)"></span>Vendido / Pago</div><div class="item"><span class="swatch" style="background:var(--seat-indisponivel)"></span>Indisponível</div><div class="item"><span class="swatch aluno-sw"></span>Reservado — alunos</div></div>`;
   return html;
+}
+
+async function migrateSequentialSeatNumbering(){
+  if(CONFIG._seatNumberingV2) return;
+  const sessions=[]; (CONFIG.shows||[]).forEach(show=>(show.sessions||[]).forEach(se=>sessions.push(se.id)));
+  try{
+    const snaps=await Promise.all(sessions.map(id=>db.ref('seats/'+id).once('value')));
+    const updates={};
+    snaps.forEach((snap,si)=>{
+      const seats=snap.val()||{}, sessionId=sessions[si];
+      Object.entries(seats).forEach(([oldId,data])=>{
+        const m=oldId.match(/^([A-Z]+)(\d+)$/); if(!m) return;
+        const r=ROOM_LAYOUT.findIndex(x=>x.row===m[1]); const oldLocal=Number(m[2]);
+        if(r<0 || oldLocal<1 || oldLocal>rowWidth(r)) return;
+        // Arquivos antigos usavam A1, A2... por fileira; converter para numeração global.
+        const newId=seatIdFor(r,oldLocal);
+        if(newId!==oldId){ updates['seats/'+sessionId+'/'+newId]=data; updates['seats/'+sessionId+'/'+oldId]=null; }
+      });
+    });
+    const gu=CONFIG.globalUnavailable||{};
+    Object.keys(gu).forEach(oldId=>{
+      const m=oldId.match(/^([A-Z]+)(\d+)$/); if(!m) return;
+      const r=ROOM_LAYOUT.findIndex(x=>x.row===m[1]); const local=Number(m[2]);
+      if(r>=0 && local>=1 && local<=rowWidth(r)) { const newId=seatIdFor(r,local); if(newId!==oldId){ updates['config/globalUnavailable/'+newId]=true; updates['config/globalUnavailable/'+oldId]=null; } }
+    });
+    updates['config/_seatNumberingV2']=true;
+    await db.ref().update(updates);
+    CONFIG._seatNumberingV2=true;
+  }catch(e){ console.warn('Migração da numeração não concluída',e); }
 }
 
 function computeSummary(seats){
@@ -1093,7 +1132,7 @@ function openBulkStatusModal(){
         : 'Este status será aplicado à sessão selecionada.';
   }));
   overlay.querySelector('#bsCancelar').addEventListener('click', ()=>overlay.remove());
-  overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
+  overlay.addEventListener('click', e=>{ if(e.target===overlay){ if(waitHandler) waitRef.off('value',waitHandler); overlay.remove(); } });
   overlay.querySelector('#bsSalvar').addEventListener('click', async ()=>{
     const status = overlay.querySelector('input[name="bulkSt"]:checked').value;
     const nome = overlay.querySelector('#bsNome')?.value.trim() || '';
@@ -1127,10 +1166,10 @@ function openBulkStatusModal(){
         const updates = {};
         const now = Date.now();
         ids.forEach(id=>{
-          let data = null;
+          let data;
           if(status==='vendido') data = {status:'vendido',nome,telefone,email,obs};
           else if(status==='aluno') data = {status:'aluno',nome:'',telefone:'',email:'',obs:''};
-          else if(status!==defaultStatusFor(id)) data = {status:'livre',nome:'',telefone:'',email:'',obs:''};
+          else data = {status:'livre',nome:'',telefone:'',email:'',obs:''};
           updates['seats/'+currentSessionId+'/'+id] = data;
           const hKey = db.ref('history/'+currentSessionId+'/'+id).push().key;
           updates['history/'+currentSessionId+'/'+id+'/'+hKey] = {status:status,nome:status==='vendido'?nome:'',at:now,by:currentUser?currentUser.email:'?'};
@@ -1168,33 +1207,25 @@ async function openWaitlistModal(sessionId){
     </div>
   </div>`;
   document.body.appendChild(overlay);
-  overlay.querySelector('#btnFecharWaitlist').addEventListener('click', ()=> overlay.remove());
+  overlay.querySelector('#btnFecharWaitlist').addEventListener('click', ()=>{ if(waitHandler) waitRef.off('value',waitHandler); overlay.remove(); });
   overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
 
   const itemsBox = overlay.querySelector('#waitlistItems');
-  async function refreshWaitlist(){
+  const waitRef = db.ref('waitlist/'+sessionId);
+  let waitHandler = null;
+  async function renderWaitlistValue(val){
     try{
-      const snap = await db.ref('waitlist/'+sessionId).once('value');
-      const val = snap.val() || {};
-      const entries = Object.entries(val).sort((a,b)=> a[1].at - b[1].at);
-      if(!entries.length){
-        itemsBox.innerHTML = '<div class="empty">Ninguém na lista de espera ainda.</div>';
-        return;
-      }
-      itemsBox.innerHTML = '<div class="found-list">' + entries.map(([key, e])=>
-        `<div class="found-item"><span><b>${escapeHtml(e.nome)}</b>${e.telefone?(' · '+escapeHtml(e.telefone)):''} — quer +${e.quantidade} ${e.obs?('· '+escapeHtml(e.obs)):''}</span><button class="btn danger tiny" data-remove-wait="${key}">Remover</button></div>`
-      ).join('') + '</div>';
-      itemsBox.querySelectorAll('[data-remove-wait]').forEach(btn=>{
-        btn.addEventListener('click', async ()=>{
-          await db.ref('waitlist/'+sessionId+'/'+btn.dataset.removeWait).remove();
-          refreshWaitlist();
-        });
-      });
-    }catch(e){
-      itemsBox.innerHTML = '<div class="empty">Erro ao carregar a lista de espera.</div>';
-    }
+      const entries = Object.entries(val || {}).sort((a,b)=> Number(a[1]?.at||0) - Number(b[1]?.at||0));
+      if(!entries.length){ itemsBox.innerHTML = '<div class="empty">Ninguém na lista de espera ainda.</div>'; return; }
+      itemsBox.innerHTML = '<div class="found-list">' + entries.map(([key,e])=>`<div class="found-item"><span><b>${escapeHtml(e.nome||'Sem nome')}</b>${e.telefone?(' · '+escapeHtml(e.telefone)):''} — quer +${Number(e.quantidade)||1}${e.obs?(' · '+escapeHtml(e.obs)):''}</span><button class="btn danger tiny" data-remove-wait="${key}">Remover</button></div>`).join('') + '</div>';
+      itemsBox.querySelectorAll('[data-remove-wait]').forEach(btn=>btn.addEventListener('click', async ()=>{
+        btn.disabled=true; try{ await waitRef.child(btn.dataset.removeWait).remove(); }catch(e){ btn.disabled=false; showToast('Não foi possível remover da fila'); }
+      }));
+    }catch(e){ itemsBox.innerHTML='<div class="empty">Erro ao renderizar a fila de espera.</div>'; }
   }
-  refreshWaitlist();
+  waitHandler = snap=>renderWaitlistValue(snap.val()||{});
+  waitRef.on('value', waitHandler, err=>{ itemsBox.innerHTML='<div class="empty">Não foi possível carregar a fila de espera. Verifique as regras de acesso do Firebase.</div>'; });
+  overlay.addEventListener('remove', ()=>waitRef.off('value',waitHandler));
 
   overlay.querySelector('#btnAddWaitlist').addEventListener('click', async ()=>{
     const nome = overlay.querySelector('#weNome').value.trim();
@@ -1432,6 +1463,33 @@ async function printSelectedTickets(sessionId, ids){
   window.print();
   if(skipped>0) showToast(skipped + ' assento(s) ignorado(s) por não estarem vendidos');
 }
+async function buildTicketPdfDataUrl(info){
+  const holder=document.createElement('div');
+  holder.style.position='fixed'; holder.style.left='-100000px'; holder.style.top='0'; holder.style.width='794px'; holder.style.background='#fff'; holder.style.padding='0'; holder.style.zIndex='-1';
+  holder.innerHTML=buildTicketHtml(info);
+  document.body.appendChild(holder);
+  try{
+    await waitForImages(holder,4000);
+    const ticket=holder.querySelector('.ticket');
+    if(!ticket) throw new Error('Ingresso não encontrado');
+    const {jsPDF}=window.jspdf||{}; if(!jsPDF) throw new Error('jsPDF não carregado');
+    // PDF A4 com o ingresso preservando a proporção visual.
+    const canvas=document.createElement('canvas');
+    const rect=ticket.getBoundingClientRect();
+    const scale=2;
+    canvas.width=Math.max(1,Math.round(rect.width*scale)); canvas.height=Math.max(1,Math.round(rect.height*scale));
+    const ctx=canvas.getContext('2d');
+    ctx.fillStyle='#111'; ctx.fillRect(0,0,canvas.width,canvas.height);
+    const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${rect.width}" height="${rect.height}"><foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml">${ticket.outerHTML}</div></foreignObject></svg>`;
+    const blob=new Blob([svg],{type:'image/svg+xml;charset=utf-8'}); const url=URL.createObjectURL(blob);
+    await new Promise((resolve,reject)=>{ const img=new Image(); img.onload=()=>{ctx.drawImage(img,0,0,canvas.width,canvas.height); URL.revokeObjectURL(url); resolve();}; img.onerror=reject; img.src=url; });
+    const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
+    const pageW=210, margin=10, w=pageW-margin*2, h=w*(canvas.height/canvas.width);
+    pdf.addImage(canvas.toDataURL('image/jpeg',0.94),'JPEG',margin,margin,w,Math.min(h,277));
+    return pdf.output('datauristring');
+  }finally{ holder.remove(); }
+}
+
 async function sendTicketEmail(info){
   if(!EMAILJS_READY){
     showToast('Configure o EmailJS primeiro (veja instruções no arquivo)');
@@ -1440,6 +1498,7 @@ async function sendTicketEmail(info){
   if(!info.email){ showToast('Este comprador não tem e-mail salvo'); return; }
   const code = ticketCode(currentSessionId, info.seatId);
   try{
+    const pdfData = await buildTicketPdfDataUrl(info);
     await emailjs.send(emailjsConfig.serviceId, emailjsConfig.templateId, {
       to_email: info.email,
       to_name: info.nome || '',
@@ -1447,7 +1506,8 @@ async function sendTicketEmail(info){
       session_label: sessionLabel(info.session),
       seat_id: info.seatId,
       ticket_code: code,
-      status_label: 'Pago'
+      status_label: 'Pago',
+      ticket_pdf: pdfData
     });
     showToast('E-mail enviado para ' + info.email);
   }catch(e){
