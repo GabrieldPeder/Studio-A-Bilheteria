@@ -4,11 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Studio A — Bilheteria</title>
-<meta name="studio-a-build" content="2026-09-09-fix-layout-alunos-v3">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Studio A">
-<meta name="studio-a-build" content="2026-09-09-right-seat-release-v2">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -16,7 +14,6 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <style>
   :root{
     --bg: #0c0a0d;
@@ -104,8 +101,6 @@
     background:var(--seat-free); cursor:pointer; font-size:8px; color:transparent;
     transition:.12s; flex:0 0 auto;
   }
-  .seat small{font-size:5.5px;color:rgba(255,255,255,.68);display:block;text-align:center;line-height:18px;white-space:nowrap;pointer-events:none;}
-  .seat.vendido small,.seat.aluno small{color:rgba(255,255,255,.82);}
   .seat.aisle-gap{background:transparent; border:none; cursor:default; width:16px;}
   .seat:hover:not(.aisle-gap):not(.readonly){background:var(--seat-free-hover); transform:translateY(-1px);}
   .seat.reservado{background:var(--seat-reserved);}
@@ -370,7 +365,7 @@
     .ticket-footer{height:7px;background:linear-gradient(90deg,var(--ticket-deep),var(--ticket-accent),var(--ticket-soft));}
   }
 
-.stair-seatmap{min-width:fit-content}.stair-row{width:max-content;margin-left:auto;margin-right:auto}.stair-row .left-block,.stair-row .center-block,.stair-row .right-block{display:flex;align-items:center;gap:6px}.stair-row .left-block{width:182px;justify-content:flex-end}.stair-row .center-block{width:384px;justify-content:center}.stair-row .right-block{width:200px;justify-content:flex-start}.stair-row .aisle-fixed{width:16px;flex:0 0 16px}.stair-empty{visibility:hidden;pointer-events:none;background:transparent!important;border-color:transparent!important;box-shadow:none!important}.stair-row .seat{flex:0 0 20px}.stair-row .row-label{flex:0 0 18px}.waitlist-form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}.waitlist-form-grid .field{min-width:0}@media(max-width:650px){.waitlist-form-grid{grid-template-columns:1fr}.stair-row .left-block{width:154px}.stair-row .center-block{width:324px}.stair-row .right-block{width:160px}.stair-row .aisle-fixed{width:10px;flex-basis:10px}}</style>
+.stair-seatmap{min-width:fit-content}.stair-row{width:max-content;margin-left:auto;margin-right:auto}.stair-empty{visibility:hidden;pointer-events:none;background:transparent!important;border-color:transparent!important;box-shadow:none!important}.stair-row .seat{flex:0 0 20px}.stair-row .aisle-gap{flex:0 0 16px!important}.stair-row .row-label{flex:0 0 18px}</style>
 </head>
 <body>
 <div class="app">
@@ -473,7 +468,6 @@ function renderLoginScreen(){
    Como conseguir: dashboard.emailjs.com → criar conta grátis →
    Email Services > conectar seu Gmail (Service ID) →
    Email Templates > criar um template (Template ID) →
-   No template, em Attachments, adicione Variable Attachment com Parameter Name: ticket_pdf.
    Account > General > Public Key.
    ========================================================= */
 const emailjsConfig = {
@@ -651,11 +645,6 @@ function attachGlobalUnavailableListener(){
   globalUnavailableRef.on('value', snap=>{
     if(!CONFIG) return;
     CONFIG.globalUnavailable = snap.val() || {};
-    dynamicSeatNumberSignature = '';
-    dynamicSeatNumberMap = new Map();
-    dynamicSeatReverseMap = new Map();
-    dynamicSeatNumberMap = new Map();
-    dynamicSeatReverseMap = new Map();
     if(currentTab==='publico') renderPublico();
     else if(currentTab==='painel' && currentUser) renderPainel();
   });
@@ -674,27 +663,13 @@ async function saveSeat(sessionId, seatId, seatData){
   try{
     if(seatData && seatData.status === 'indisponivel'){
       await setGlobalUnavailable(seatId, true);
-      if(SEATS_CACHE[sessionId]) SEATS_CACHE[sessionId][seatId] = Object.assign({}, SEATS_CACHE[sessionId][seatId]||{}, {status:'indisponivel'});
       await logHistory(sessionId, seatId, { status:'indisponivel', nome:'', at: Date.now(), by: currentUser?currentUser.email:'?' });
-      dynamicSeatNumberSignature = '';
-      return true;
+      return;
     }
     if(isGlobalUnavailable(seatId)) await setGlobalUnavailable(seatId, false);
     if(seatData === null){
-      // ATENÇÃO: nas laterais direitas o estado padrão é ALUNO.
-      // Portanto, remover o registro faria a cadeira voltar imediatamente
-      // para ALUNO. Ao liberar explicitamente uma cadeira da direita,
-      // persistimos LIVRE para que ela continue vendível e seja contabilizada.
-      const releaseAsSellable = defaultStatusFor(seatId) === 'aluno';
-      if(releaseAsSellable){
-        const released = {status:'livre',nome:'',telefone:'',email:'',obs:''};
-        await db.ref('seats/'+sessionId+'/'+seatId).set(released);
-        SEATS_CACHE[sessionId] = SEATS_CACHE[sessionId] || {};
-        SEATS_CACHE[sessionId][seatId] = released;
-      } else {
-        await db.ref('seats/'+sessionId+'/'+seatId).remove();
-        if(SEATS_CACHE[sessionId]) delete SEATS_CACHE[sessionId][seatId];
-      }
+      await db.ref('seats/'+sessionId+'/'+seatId).remove();
+      if(SEATS_CACHE[sessionId]) delete SEATS_CACHE[sessionId][seatId];
       await logHistory(sessionId, seatId, { status:'livre', nome:'', at: Date.now(), by: currentUser?currentUser.email:'?' });
     } else {
       await db.ref('seats/'+sessionId+'/'+seatId).set(seatData);
@@ -702,15 +677,7 @@ async function saveSeat(sessionId, seatId, seatData){
       SEATS_CACHE[sessionId][seatId] = seatData;
       await logHistory(sessionId, seatId, { status:seatData.status, nome:seatData.nome||'', at: Date.now(), by: currentUser?currentUser.email:'?' });
     }
-    dynamicSeatNumberSignature = '';
-    dynamicSeatNumberMap = new Map();
-    dynamicSeatReverseMap = new Map();
-    return true;
-  }catch(e){
-    console.error('saveSeat',e);
-    showToast('Não foi possível alterar a cadeira: '+(e.code || e.message || 'verifique as regras do Firebase'));
-    return false;
-  }
+  }catch(e){ showToast('Erro ao salvar assento'); }
 }
 function logHistory(sessionId, seatId, entry){
   return db.ref('history/'+sessionId+'/'+seatId).push(entry).catch(()=>{});
@@ -719,10 +686,7 @@ function statusLabel(st){
   return st==='vendido' ? 'Vendido' : st==='indisponivel' ? 'Indisponível' : 'Liberado';
 }
 
-/* ---------- Layout da sala — escada fixa + numeração sequencial ---------- */
-// Layout físico informado pelo Studio A.
-// Cada fileira possui: lateral esquerda / bloco central / lateral direita.
-// O bloco central permanece SEMPRE centralizado; as laterais não o deslocam.
+/* ---------- Layout da sala — laterais em escada ---------- */
 const ROOM_LAYOUT = [
   {row:'A', left:2, center:15, right:2},
   {row:'B', left:3, center:15, right:3},
@@ -735,201 +699,45 @@ const ROOM_LAYOUT = [
   {row:'I', left:7, center:15, right:8},
   {row:'J', left:6, center:15, right:8},
   {row:'K', left:6, center:15, right:8},
-  {row:'L', left:4, center:8, right:8}
+  {row:'L', left:4, center:15, right:8}
 ];
-const MAX_LEFT_BLOCK = Math.max(...ROOM_LAYOUT.map(x=>x.left));
-const MAX_RIGHT_BLOCK = Math.max(...ROOM_LAYOUT.map(x=>x.right));
 function roomRow(r){ return ROOM_LAYOUT[r] || {row:rowLetter(r), left:7, center:15, right:8}; }
 function rowWidth(r){ const x=roomRow(r); return x.left+x.center+x.right; }
-function rowStart(r){ let n=1; for(let i=0;i<r;i++) n += rowWidth(i); return n; }
-function oldSeatIdFor(r,n){ return roomRow(r).row+n; }
-function seatIdFor(r,n){ return roomRow(r).row+(rowStart(r)+n-1); }
-function seatColumn(seatId){ const m=seatId.match(/\d+$/); return m ? parseInt(m[0],10) : 0; }
+function blockOf(n, r){ const x=roomRow(r); if(n<=x.left) return 'left'; if(n<=x.left+x.center) return 'center'; return 'right'; }
+function seatColumn(seatId){ const m=seatId.match(/\d+$/); return m ? parseInt(m[0],10) : 1; }
 function seatRowLetter(seatId){ const m=seatId.match(/^[A-Z]+/); return m ? m[0] : ''; }
 function rowIndexFromSeatId(seatId){ const letter=seatRowLetter(seatId); return ROOM_LAYOUT.findIndex(x=>x.row===letter); }
-function localSeatNumberFromGlobal(seatId){ const r=rowIndexFromSeatId(seatId); const n=seatColumn(seatId); return r<0 ? 0 : n-rowStart(r)+1; }
-function blockOf(seatId){ const r=rowIndexFromSeatId(seatId); const x=roomRow(r); const local=localSeatNumberFromGlobal(seatId); if(local<=x.left) return 'left'; if(local<=x.left+x.center) return 'center'; return 'right'; }
-function defaultStatusFor(seatId){ const r=rowIndexFromSeatId(seatId); if(r<0) return 'livre'; const x=roomRow(r); const local=localSeatNumberFromGlobal(seatId); return local>x.left+x.center ? 'aluno' : 'livre'; }
-// Numeração comercial DINÂMICA: somente os lugares atualmente vendíveis recebem número.
-// Alunos e indisponíveis nunca entram na numeração. Ao bloquear/liberar uma cadeira,
-// os números são recalculados automaticamente a partir das cadeiras vendíveis.
-let dynamicSeatNumberMap = new Map();
-let dynamicSeatReverseMap = new Map();
-let dynamicSeatNumberSignature = '';
-function rebuildDynamicSeatNumbers(seats){
-  // A numeração é comercial e dinâmica: somente LIVRE/VENDIDO entram.
-  // Aluno e indisponível ficam fora. A numeração é por sessão, pois ALUNO
-  // é um status de sessão, enquanto INDISPONÍVEL é global.
-  seats = seats || {};
-  const parts = [];
-  ROOM_LAYOUT.forEach((x,r)=>{
-    for(let local=1; local<=x.left+x.center; local++){
-      const id=seatIdFor(r,local);
-      parts.push(id+':'+effectiveSeatStatus(seats,id));
-    }
-  });
-  const sig = currentSessionId + '|' + parts.join('|');
-  if(sig===dynamicSeatNumberSignature && dynamicSeatNumberMap.size) return;
-  dynamicSeatNumberSignature = sig;
-  dynamicSeatNumberMap = new Map();
-  dynamicSeatReverseMap = new Map();
-  let n=1;
-  ROOM_LAYOUT.forEach((x,r)=>{
-    for(let local=1; local<=x.left+x.center; local++){
-      const id=seatIdFor(r,local);
-      const st=effectiveSeatStatus(seats,id);
-      if(st!=='livre' && st!=='vendido') continue;
-      const label=x.row+n;
-      dynamicSeatNumberMap.set(id,label);
-      dynamicSeatReverseMap.set(label,id);
-      n++;
-    }
-  });
-}
-function sellableNumberForSeat(seatId, seats){
-  rebuildDynamicSeatNumbers(seats || SEATS_CACHE[currentSessionId] || {});
-  const label=dynamicSeatNumberMap.get(seatId);
-  return label ? Number(label.replace(/^[A-Z]+/,'')) : null;
-}
-function displaySeatLabel(seatId, status, seats){
-  if(status==='aluno' || status==='indisponivel' || isGlobalUnavailable(seatId)) return '';
-  rebuildDynamicSeatNumbers(seats || SEATS_CACHE[currentSessionId] || {});
-  return dynamicSeatNumberMap.get(seatId) || '';
-}
-function physicalSeatIdFromDisplayLabel(label, seats){
-  rebuildDynamicSeatNumbers(seats || SEATS_CACHE[currentSessionId] || {});
-  return dynamicSeatReverseMap.get(String(label||'').trim().toUpperCase()) || null;
-}
-function seatIdsForRow(r){ const ids=[]; for(let n=1;n<=rowWidth(r);n++) ids.push(seatIdFor(r,n)); return ids; }
-function seatHtml(seats, readonly, r, local){
-  const id=seatIdFor(r,local), st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st;
-  const mark=st==='indisponivel'?'✕':'';
-  const who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'';
-  const label=displaySeatLabel(id,st,seats);
-  const title=st==='aluno'?id+' — reservado para alunos':st==='indisponivel'?id+' — Indisponível':label+' — '+statusLabel(st)+who;
-  return `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}<small>${label}</small></div>`;
-}
+function defaultStatusFor(seatId){ const r=rowIndexFromSeatId(seatId); return blockOf(seatColumn(seatId), r) === 'right' ? 'aluno' : 'livre'; }
+function seatIdFor(r,n){ return roomRow(r).row+n; }
 function renderSeatMap(seats, readonly){
-  rebuildDynamicSeatNumbers(seats || {});
-  // Estrutura fixa: laterais em escada + corredores + bloco central com 15 posições visuais.
-  // A última fileira tem somente 8 cadeiras no centro, centralizadas dentro do espaço de 15.
-  // Assim, reduzir/aumentar as laterais nunca puxa o bloco central.
+  const maxLeft = Math.max(...ROOM_LAYOUT.map(x=>x.left));
+  const maxRight = Math.max(...ROOM_LAYOUT.map(x=>x.right));
   let html = '<div class="stage-wrap"><div class="stage"><span>Palco</span></div><div class="seatmap stair-seatmap">';
   ROOM_LAYOUT.forEach((layout,r)=>{
-    html += `<div class="seat-row stair-row" data-row="${layout.row}"><div class="row-label">${layout.row}</div><div class="left-block">`;
-    for(let i=1;i<=MAX_LEFT_BLOCK;i++){
-      if(i > MAX_LEFT_BLOCK-layout.left) html += seatHtml(seats,readonly,r,i-(MAX_LEFT_BLOCK-layout.left));
-      else html += '<div class="seat stair-empty"></div>';
+    html += `<div class="seat-row stair-row" data-row="${layout.row}"><div class="row-label">${layout.row}</div>`;
+    const leftPad = maxLeft-layout.left;
+    const rightPad = maxRight-layout.right;
+    for(let i=0;i<leftPad;i++) html += '<div class="seat stair-empty"></div>';
+    for(let n=1;n<=layout.left;n++){
+      const id=layout.row+n, st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
+      html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}</div>`;
     }
-    html += '</div><div class="aisle-fixed"></div><div class="center-block">';
-    for(let n=layout.left+1;n<=layout.left+layout.center;n++) html += seatHtml(seats,readonly,r,n);
-    html += '</div><div class="aisle-fixed"></div><div class="right-block">';
-    for(let i=1;i<=MAX_RIGHT_BLOCK;i++){
-      if(i<=layout.right) html += seatHtml(seats,readonly,r,layout.left+layout.center+i);
-      else html += '<div class="seat stair-empty"></div>';
+    html += '<div class="seat aisle-gap"></div>';
+    for(let n=layout.left+1;n<=layout.left+layout.center;n++){
+      const id=layout.row+n, st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
+      html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}</div>`;
     }
-    html += '</div></div>';
+    html += '<div class="seat aisle-gap"></div>';
+    for(let n=layout.left+layout.center+1;n<=layout.left+layout.center+layout.right;n++){
+      const id=layout.row+n, st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
+      html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}</div>`;
+    }
+    for(let i=0;i<rightPad;i++) html += '<div class="seat stair-empty"></div>';
+    html += '</div>';
   });
   html += '</div></div>';
   html += `<div class="legend"><div class="item"><span class="swatch" style="background:var(--seat-free)"></span>Disponível</div><div class="item"><span class="swatch" style="background:var(--seat-sold)"></span>Vendido / Pago</div><div class="item"><span class="swatch" style="background:var(--seat-indisponivel)"></span>Indisponível</div><div class="item"><span class="swatch aluno-sw"></span>Reservado — alunos</div></div>`;
   return html;
-}
-
-async function migrateSeatLayoutV3(){
-  if(CONFIG._seatLayoutV3) return;
-  // A versão anterior desta tela usava 8 cadeiras no centro de TODAS as fileiras.
-  // O layout correto usa 15 no centro de A-K e 8 apenas em L. Reposicionamos
-  // a numeração global mantendo a posição física local de cada cadeira.
-  const previousLayout = [
-    {left:2, center:8, right:2},{left:3, center:8, right:3},{left:5, center:8, right:4},{left:6, center:8, right:5},
-    {left:7, center:8, right:8},{left:7, center:8, right:8},{left:7, center:8, right:8},{left:7, center:8, right:8},
-    {left:7, center:8, right:8},{left:6, center:8, right:8},{left:6, center:8, right:8},{left:4, center:8, right:8}
-  ];
-  const sessions=[]; (CONFIG.shows||[]).forEach(show=>(show.sessions||[]).forEach(se=>sessions.push(se.id)));
-  const prevStart=r=>{ let n=1; for(let i=0;i<r;i++) n += previousLayout[i].left+previousLayout[i].center+previousLayout[i].right; return n; };
-  const prevWidth=r=>previousLayout[r].left+previousLayout[r].center+previousLayout[r].right;
-  const newStart=r=>rowStart(r);
-  const updates={};
-  try{
-    const snaps=await Promise.all(sessions.map(id=>db.ref('seats/'+id).once('value')));
-    snaps.forEach((snap,si)=>{
-      const seats=snap.val()||{}, sessionId=sessions[si];
-      Object.entries(seats).forEach(([oldId,data])=>{
-        const m=oldId.match(/^([A-Z]+)(\d+)$/); if(!m) return;
-        const r=ROOM_LAYOUT.findIndex(x=>x.row===m[1]); if(r<0) return;
-        const globalOld=Number(m[2]);
-        const start=prevStart(r), local=globalOld-start+1;
-        if(local<1 || local>prevWidth(r)) return;
-        const newId=ROOM_LAYOUT[r].row+(newStart(r)+local-1);
-        if(newId!==oldId){ updates['seats/'+sessionId+'/'+newId]=data; updates['seats/'+sessionId+'/'+oldId]=null; }
-      });
-    });
-    Object.keys(CONFIG.globalUnavailable||{}).forEach(oldId=>{
-      const m=oldId.match(/^([A-Z]+)(\d+)$/); if(!m) return;
-      const r=ROOM_LAYOUT.findIndex(x=>x.row===m[1]); if(r<0) return;
-      const local=Number(m[2])-prevStart(r)+1;
-      if(local>=1 && local<=prevWidth(r)){
-        const newId=ROOM_LAYOUT[r].row+(newStart(r)+local-1);
-        if(newId!==oldId){ updates['config/globalUnavailable/'+newId]=true; updates['config/globalUnavailable/'+oldId]=null; }
-      }
-    });
-    updates['config/_seatLayoutV3']=true;
-    await db.ref().update(updates);
-    CONFIG._seatLayoutV3=true;
-    Object.keys(SEATS_CACHE).forEach(k=>delete SEATS_CACHE[k]);
-  }catch(e){ console.warn('Migração do layout V3 não concluída',e); }
-}
-
-async function migrateSequentialSeatNumbering(){
-  if(CONFIG._seatNumberingV3) return;
-  const sessions=[]; (CONFIG.shows||[]).forEach(show=>(show.sessions||[]).forEach(se=>sessions.push(se.id)));
-  // Layout anterior usado na numeração V2: 15 no centro e 8 à direita.
-  const OLD_LAYOUT = [
-    {row:'A',left:2,center:15,right:2},{row:'B',left:3,center:15,right:3},{row:'C',left:5,center:15,right:4},
-    {row:'D',left:6,center:15,right:5},{row:'E',left:7,center:15,right:8},{row:'F',left:7,center:15,right:8},
-    {row:'G',left:7,center:15,right:8},{row:'H',left:7,center:15,right:8},{row:'I',left:7,center:15,right:8},
-    {row:'J',left:6,center:15,right:8},{row:'K',left:6,center:15,right:8},{row:'L',left:4,center:8,right:8}
-  ];
-  const oldWidth=r=>OLD_LAYOUT[r].left+OLD_LAYOUT[r].center+OLD_LAYOUT[r].right;
-  const oldStart=r=>{let n=1;for(let i=0;i<r;i++)n+=oldWidth(i);return n;};
-  const newFromOldId=(id, v2)=>{
-    const m=id.match(/^([A-Z]+)(\d+)$/); if(!m) return null;
-    const r=ROOM_LAYOUT.findIndex(x=>x.row===m[1]); if(r<0) return null;
-    const raw=Number(m[2]); let local;
-    if(v2){
-      // V2 era global: A1...A19, B20..., etc.
-      if(raw<oldStart(r) || raw>oldStart(r)+oldWidth(r)-1) return null;
-      local=raw-oldStart(r)+1;
-    }else{
-      // Versões anteriores ao V2 eram locais: A1...A19, B1...B21, etc.
-      local=raw;
-    }
-    if(local<1 || local>rowWidth(r)) return null;
-    return seatIdFor(r,local);
-  };
-  try{
-    const wasV2=!!CONFIG._seatNumberingV2;
-    const snaps=await Promise.all(sessions.map(id=>db.ref('seats/'+id).once('value')));
-    const updates={};
-    snaps.forEach((snap,si)=>{
-      const seats=snap.val()||{}, sessionId=sessions[si];
-      Object.entries(seats).forEach(([oldId,data])=>{
-        const newId=newFromOldId(oldId,wasV2);
-        if(!newId || newId===oldId) return;
-        // Se o novo ID já possui dados, não sobrescreve; apenas remove o ID antigo.
-        if(!seats[newId]) updates['seats/'+sessionId+'/'+newId]=data;
-        updates['seats/'+sessionId+'/'+oldId]=null;
-      });
-    });
-    const gu=CONFIG.globalUnavailable||{};
-    Object.keys(gu).forEach(oldId=>{
-      const newId=newFromOldId(oldId,wasV2);
-      if(newId && newId!==oldId){ updates['config/globalUnavailable/'+newId]=true; updates['config/globalUnavailable/'+oldId]=null; }
-    });
-    updates['config/_seatNumberingV3']=true;
-    await db.ref().update(updates);
-    CONFIG._seatNumberingV3=true;
-  }catch(e){ console.warn('Migração da numeração não concluída',e); }
 }
 
 function computeSummary(seats){
@@ -989,7 +797,7 @@ async function getShowReport(show){
     const sum = computeSummary(seats);
     // Alunos não fazem parte da lotação comercial.
     // Lugares indisponíveis também não são vendíveis.
-    totalPlaces += sum.sellable;
+    totalPlaces += sum.sellable - sum.indisponivel;
     Object.entries(seats).forEach(([id,d])=>{
       if(d && d.status==='vendido'){
         sold++;
@@ -1044,21 +852,15 @@ function renderShowReportHtml(box, show, r){
 let priceSelectedSeats = new Set();
 function renderPriceMap(){
   let html = '<div class="seatmap price-map stair-seatmap">';
-  for(let r=0;r<ROOM_LAYOUT.length;r++){
-    const layout=roomRow(r);
-    html += `<div class="seat-row stair-row"><div class="row-label">${layout.row}</div><div class="left-block">`;
-    for(let i=1;i<=MAX_LEFT_BLOCK;i++){
-      if(i > MAX_LEFT_BLOCK-layout.left){ const local=i-(MAX_LEFT_BLOCK-layout.left); const id=seatIdFor(r,local); const price=(CONFIG.prices&&CONFIG.prices[id]!=null)?CONFIG.prices[id]:null; const sel=priceSelectedSeats.has(id)?'selected':''; const noPrice=price==null?'no-price':''; html+=`<div class="seat price-seat ${sel} ${noPrice}" data-price-seat="${id}" title="${id}">${price!=null?Math.round(price):''}</div>`; }
-      else html+='<div class="seat stair-empty"></div>';
+  for(let r=0;r<ROOM_LAYOUT.length;r++){ const layout=roomRow(r); html += `<div class="seat-row stair-row"><div class="row-label">${layout.row}</div>`; const maxLeft=Math.max(...ROOM_LAYOUT.map(x=>x.left)); const maxRight=Math.max(...ROOM_LAYOUT.map(x=>x.right)); for(let i=0;i<maxLeft-layout.left;i++) html+='<div class="seat stair-empty"></div>'; for(let n=1;n<=rowWidth(r);n++){
+      const id = rowLetter(r)+n;
+      const price = (CONFIG.prices && CONFIG.prices[id]!=null) ? CONFIG.prices[id] : null;
+      const sel = priceSelectedSeats.has(id) ? 'selected' : '';
+      const noPrice = price==null ? 'no-price' : '';
+      html += `<div class="seat price-seat ${sel} ${noPrice}" data-price-seat="${id}" title="${id}">${price!=null ? Math.round(price) : ''}</div>`;
+      if(n === layout.left || n === layout.left + layout.center){ html += '<div class="seat aisle-gap"></div>'; }
     }
-    html += '</div><div class="aisle-fixed"></div><div class="center-block">';
-    for(let n=layout.left+1;n<=layout.left+layout.center;n++){ const id=seatIdFor(r,n); const price=(CONFIG.prices&&CONFIG.prices[id]!=null)?CONFIG.prices[id]:null; const sel=priceSelectedSeats.has(id)?'selected':''; const noPrice=price==null?'no-price':''; html+=`<div class="seat price-seat ${sel} ${noPrice}" data-price-seat="${id}" title="${id}">${price!=null?Math.round(price):''}</div>`; }
-    html += '</div><div class="aisle-fixed"></div><div class="right-block">';
-    for(let i=1;i<=MAX_RIGHT_BLOCK;i++){
-      if(i<=layout.right){ const local=layout.left+layout.center+i; const id=seatIdFor(r,local); const price=(CONFIG.prices&&CONFIG.prices[id]!=null)?CONFIG.prices[id]:null; const sel=priceSelectedSeats.has(id)?'selected':''; const noPrice=price==null?'no-price':''; html+=`<div class="seat price-seat ${sel} ${noPrice}" data-price-seat="${id}" title="${id}">${price!=null?Math.round(price):''}</div>`; }
-      else html+='<div class="seat stair-empty"></div>';
-    }
-    html += '</div></div>';
+    html += `</div>`;
   }
   html += '</div>';
   return html;
@@ -1301,41 +1103,40 @@ function openBulkStatusModal(){
     const btn = overlay.querySelector('#bsSalvar');
     btn.disabled = true;
     try{
-      const now = Date.now();
-      // Grave cada tipo de dado em seu próprio caminho. Isso evita que uma
-      // regra de segurança de /config/globalUnavailable bloqueie /seats.
       if(status==='indisponivel'){
-        const results = await Promise.allSettled(ids.map(id=>db.ref('config/globalUnavailable/'+id).set(true)));
-        const failed = results.filter(r=>r.status==='rejected');
-        if(failed.length) throw (failed[0].reason || new Error('PERMISSION_DENIED em config/globalUnavailable'));
-        CONFIG.globalUnavailable = CONFIG.globalUnavailable || {};
-        ids.forEach(id=>{ CONFIG.globalUnavailable[id] = true; });
-      } else {
-        const seatResults = await Promise.allSettled(ids.map(async id=>{
-          const ref=db.ref('seats/'+currentSessionId+'/'+id);
-          if(status==='vendido') return ref.set({status:'vendido',nome,telefone,email,obs});
-          if(status==='aluno') return ref.set({status:'aluno',nome:'',telefone:'',email:'',obs:''});
-          // 'Livre' precisa ser explícito quando a cadeira pertence à
-          // lateral direita, pois o estado padrão dessa região é ALUNO.
-          if(defaultStatusFor(id)==='aluno') return ref.set({status:'livre',nome:'',telefone:'',email:'',obs:''});
-          return ref.remove();
-        }));
-        const seatFailed = seatResults.filter(r=>r.status==='rejected');
-        if(seatFailed.length) throw (seatFailed[0].reason || new Error('PERMISSION_DENIED em seats'));
-        const globalIds=ids.filter(id=>isGlobalUnavailable(id));
-        if(globalIds.length){
-          const globalResults=await Promise.allSettled(globalIds.map(id=>db.ref('config/globalUnavailable/'+id).remove()));
-          const globalFailed=globalResults.filter(r=>r.status==='rejected');
-          if(globalFailed.length) throw (globalFailed[0].reason || new Error('PERMISSION_DENIED em config/globalUnavailable'));
+        const updates = {};
+        const now = Date.now();
+        ids.forEach(id=>{
+          updates['config/globalUnavailable/'+id] = true;
+          const hKey = db.ref('history/'+currentSessionId+'/'+id).push().key;
+          updates['history/'+currentSessionId+'/'+id+'/'+hKey] = {status:'indisponivel',nome:'',at:now,by:currentUser?currentUser.email:'?'};
           CONFIG.globalUnavailable = CONFIG.globalUnavailable || {};
-          globalIds.forEach(id=>{ delete CONFIG.globalUnavailable[id]; });
-        }
+          CONFIG.globalUnavailable[id] = true;
+        });
+        await db.ref().update(updates);
+      } else {
+        // Ao aplicar qualquer outro status, remove eventual indisponibilidade global dessas cadeiras.
+        const globalUpdates = {};
+        ids.forEach(id=>{
+          if(isGlobalUnavailable(id)){
+            globalUpdates['config/globalUnavailable/'+id] = null;
+            delete CONFIG.globalUnavailable[id];
+          }
+        });
+        if(Object.keys(globalUpdates).length) await db.ref().update(globalUpdates);
+        const updates = {};
+        const now = Date.now();
+        ids.forEach(id=>{
+          let data = null;
+          if(status==='vendido') data = {status:'vendido',nome,telefone,email,obs};
+          else if(status==='aluno') data = {status:'aluno',nome:'',telefone:'',email:'',obs:''};
+          else if(status!==defaultStatusFor(id)) data = {status:'livre',nome:'',telefone:'',email:'',obs:''};
+          updates['seats/'+currentSessionId+'/'+id] = data;
+          const hKey = db.ref('history/'+currentSessionId+'/'+id).push().key;
+          updates['history/'+currentSessionId+'/'+id+'/'+hKey] = {status:status,nome:status==='vendido'?nome:'',at:now,by:currentUser?currentUser.email:'?'};
+        });
+        await db.ref().update(updates);
       }
-      dynamicSeatNumberSignature = '';
-      dynamicSeatNumberMap = new Map();
-      dynamicSeatReverseMap = new Map();
-      // Histórico é opcional; uma regra de /history nunca desfaz a alteração.
-      await Promise.allSettled(ids.map(id=>logHistory(currentSessionId,id,{status,nome:status==='vendido'?nome:'',at:now,by:currentUser?currentUser.email:'?'})));
       reportCache = {};
       overlay.remove();
       selectedSeats.clear();
@@ -1343,7 +1144,7 @@ function openBulkStatusModal(){
       renderPainel();
     }catch(e){
       btn.disabled = false;
-      showToast('Erro ao atualizar os assentos: ' + (e.code || e.message || 'verifique as permissões do Firebase'));
+      showToast('Erro ao atualizar os assentos');
     }
   });
 }
@@ -1352,84 +1153,62 @@ async function openWaitlistModal(sessionId){
   const found = findShowAndSession(sessionId);
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
-  overlay.innerHTML = `<div class="modal" style="max-width:520px;">
+  overlay.innerHTML = `<div class="modal" style="max-width:420px;">
     <h3>Lista de espera</h3>
     <div class="sub">${found ? escapeHtml(found.show.name)+' — '+escapeHtml(sessionLabel(found.session)) : ''}</div>
-    <p class="note" style="margin-top:-8px;">Cada aluno tem direito a 4 ingressos. Registre aqui pedidos adicionais.</p>
-    <div class="waitlist-form-grid">
-      <div class="field"><label>Nome</label><input id="weNome" placeholder="Nome do aluno/responsável"/></div>
-      <div class="field"><label>Telefone</label><input id="weTel" placeholder="(00) 00000-0000"/></div>
-      <div class="field"><label>Ingressos adicionais</label><input id="weQtd" type="number" min="1" value="1"/></div>
-      <div class="field"><label>Observação</label><input id="weObs" placeholder="Opcional"/></div>
+    <p class="note" style="margin-top:-8px;">Cada aluno tem direito a 4 ingressos. Se pedir mais, anote aqui quantos a mais ela quer, caso sobre.</p>
+    <div class="field"><label>Nome</label><input id="weNome" placeholder="Nome do aluno/responsável"/></div>
+    <div class="field"><label>Telefone</label><input id="weTel" placeholder="(00) 00000-0000"/></div>
+    <div class="field"><label>Quantos ingressos a mais quer</label><input id="weQtd" type="number" min="1" value="1"/></div>
+    <div class="field"><label>Observação</label><input id="weObs" placeholder="Opcional"/></div>
+    <button class="btn gold" id="btnAddWaitlist" style="width:100%; margin-bottom:16px;">+ Adicionar à lista</button>
+    <div id="waitlistItems"><div class="empty">Carregando…</div></div>
+    <div class="modal-actions" style="justify-content:flex-end;">
+      <button class="btn ghost" id="btnFecharWaitlist">Fechar</button>
     </div>
-    <button class="btn gold" id="btnAddWaitlist" style="width:100%; margin:10px 0 16px;">+ Adicionar à lista</button>
-    <div id="waitlistStatus" class="note"></div>
-    <div id="waitlistItems"><div class="empty">Carregando lista de espera…</div></div>
-    <div class="modal-actions" style="justify-content:flex-end;"><button class="btn ghost" id="btnFecharWaitlist">Fechar</button></div>
   </div>`;
   document.body.appendChild(overlay);
-  const itemsBox=overlay.querySelector('#waitlistItems');
-  const statusBox=overlay.querySelector('#waitlistStatus');
-  let active=true;
-  let waitRef=null;
-  let waitPath='';
-  let waitListener=null;
+  overlay.querySelector('#btnFecharWaitlist').addEventListener('click', ()=> overlay.remove());
+  overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
 
-  const renderEntries=(val)=>{
-    const entries=Object.entries(val||{}).sort((a,b)=>Number(a[1]?.at||0)-Number(b[1]?.at||0));
-    if(!entries.length){itemsBox.innerHTML='<div class="empty">Ninguém na lista de espera ainda.</div>';return;}
-    itemsBox.innerHTML='<div class="found-list">'+entries.map(([key,e],i)=>`<div class="found-item"><span><b>#${i+1} ${escapeHtml(e.nome||'Sem nome')}</b>${e.telefone?' · '+escapeHtml(e.telefone):''} — quer +${Number(e.quantidade)||1}${e.obs?' · '+escapeHtml(e.obs):''}</span><button class="btn danger tiny" data-remove-wait="${escapeHtml(key)}">Remover</button></div>`).join('')+'</div>';
-    itemsBox.querySelectorAll('[data-remove-wait]').forEach(btn=>btn.addEventListener('click',async()=>{
-      btn.disabled=true;
-      try{ await db.ref(waitPath+'/'+btn.dataset.removeWait).remove(); }
-      catch(e){ btn.disabled=false; showToast('Não foi possível remover da fila: '+(e.code||e.message||'verifique as regras do Firebase')); }
-    }));
-  };
-
-  // O sistema antigo podia usar /waitlist. Preferimos esse caminho por compatibilidade
-  // e só usamos /config/waitlist se a leitura for permitida lá.
-  const candidates=['waitlist/'+sessionId,'config/waitlist/'+sessionId];
-  async function tryPath(path){
+  const itemsBox = overlay.querySelector('#waitlistItems');
+  async function refreshWaitlist(){
     try{
-      const snap=await db.ref(path).once('value');
-      return {ok:true,path,val:snap.val()||{}};
-    }catch(e){ return {ok:false,path,error:e}; }
+      const snap = await db.ref('waitlist/'+sessionId).once('value');
+      const val = snap.val() || {};
+      const entries = Object.entries(val).sort((a,b)=> a[1].at - b[1].at);
+      if(!entries.length){
+        itemsBox.innerHTML = '<div class="empty">Ninguém na lista de espera ainda.</div>';
+        return;
+      }
+      itemsBox.innerHTML = '<div class="found-list">' + entries.map(([key, e])=>
+        `<div class="found-item"><span><b>${escapeHtml(e.nome)}</b>${e.telefone?(' · '+escapeHtml(e.telefone)):''} — quer +${e.quantidade} ${e.obs?('· '+escapeHtml(e.obs)):''}</span><button class="btn danger tiny" data-remove-wait="${key}">Remover</button></div>`
+      ).join('') + '</div>';
+      itemsBox.querySelectorAll('[data-remove-wait]').forEach(btn=>{
+        btn.addEventListener('click', async ()=>{
+          await db.ref('waitlist/'+sessionId+'/'+btn.dataset.removeWait).remove();
+          refreshWaitlist();
+        });
+      });
+    }catch(e){
+      itemsBox.innerHTML = '<div class="empty">Erro ao carregar a lista de espera.</div>';
+    }
   }
-  const first=await tryPath(candidates[0]);
-  const second=first.ok ? null : await tryPath(candidates[1]);
-  const chosen=first.ok ? first : second;
-  if(!active) return;
-  if(!chosen || !chosen.ok){
-    itemsBox.innerHTML='<div class="empty">A fila de espera está bloqueada pelas regras de segurança do Firebase. O código tentou <b>/waitlist/'+escapeHtml(sessionId)+'</b> e <b>/config/waitlist/'+escapeHtml(sessionId)+'</b>, mas ambos retornaram PERMISSION_DENIED.</div>';
-    statusBox.innerHTML='Para funcionar em todos os aparelhos, libere leitura e escrita desses caminhos para a equipe autenticada nas <b>Realtime Database Rules</b>.';
-  }else{
-    waitPath=chosen.path;
-    renderEntries(chosen.val);
-    waitRef=db.ref(waitPath);
-    waitListener=snap=>{if(active)renderEntries(snap.val()||{});};
-    waitRef.on('value',waitListener,err=>{
-      if(active) statusBox.textContent='Erro ao atualizar a fila: '+(err.code||err.message||'verifique as regras do Firebase');
-    });
-  }
+  refreshWaitlist();
 
-  const close=()=>{if(!active)return;active=false;if(waitRef&&waitListener)waitRef.off('value',waitListener);overlay.remove();};
-  overlay.querySelector('#btnFecharWaitlist').addEventListener('click',close);
-  overlay.addEventListener('click',e=>{if(e.target===overlay)close();});
-  overlay.querySelector('#btnAddWaitlist').addEventListener('click',async()=>{
-    const nome=overlay.querySelector('#weNome').value.trim();
-    const telefone=overlay.querySelector('#weTel').value.trim();
-    const quantidade=Math.max(1,parseInt(overlay.querySelector('#weQtd').value)||1);
-    const obs=overlay.querySelector('#weObs').value.trim();
-    const btn=overlay.querySelector('#btnAddWaitlist');
-    if(!nome){showToast('Preencha o nome');return;}
-    if(!waitPath){showToast('A fila está bloqueada pelas regras do Firebase');return;}
-    btn.disabled=true;
-    try{
-      await db.ref(waitPath).push({nome,telefone,quantidade,obs,at:Date.now(),by:currentUser?currentUser.email:'?'});
-      overlay.querySelector('#weNome').value=''; overlay.querySelector('#weTel').value=''; overlay.querySelector('#weQtd').value='1'; overlay.querySelector('#weObs').value='';
-      statusBox.textContent='Adicionado à fila.';
-    }catch(e){showToast('Não foi possível adicionar à fila: '+(e.code||e.message||'verifique as regras do Firebase'));}
-    finally{btn.disabled=false;}
+  overlay.querySelector('#btnAddWaitlist').addEventListener('click', async ()=>{
+    const nome = overlay.querySelector('#weNome').value.trim();
+    const telefone = overlay.querySelector('#weTel').value.trim();
+    const quantidade = Math.max(1, parseInt(overlay.querySelector('#weQtd').value)||1);
+    const obs = overlay.querySelector('#weObs').value.trim();
+    if(!nome){ showToast('Preencha o nome'); return; }
+    await db.ref('waitlist/'+sessionId).push({ nome, telefone, quantidade, obs, at: Date.now(), by: currentUser?currentUser.email:'?' });
+    overlay.querySelector('#weNome').value = '';
+    overlay.querySelector('#weTel').value = '';
+    overlay.querySelector('#weQtd').value = '1';
+    overlay.querySelector('#weObs').value = '';
+    refreshWaitlist();
+    showToast('Adicionado à lista de espera');
   });
 }
 
@@ -1491,8 +1270,7 @@ async function openSeatModal(seatId){
   overlay.querySelector('#btnCancelar').addEventListener('click', ()=> overlay.remove());
   overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
   overlay.querySelector('#btnLimpar').addEventListener('click', async ()=>{
-    const ok = await saveSeat(currentSessionId, seatId, null);
-    if(!ok) return;
+    await saveSeat(currentSessionId, seatId, null);
     overlay.remove();
     showToast('Assento liberado');
   });
@@ -1502,17 +1280,11 @@ async function openSeatModal(seatId){
     const telefone = overlay.querySelector('#fTel').value.trim();
     const email = overlay.querySelector('#fEmail').value.trim();
     const obs = overlay.querySelector('#fObs').value.trim();
-    let ok=false;
-    // Nunca use remove() para 'Livre' em uma cadeira cujo padrão é ALUNO.
-    // Nesse caso o registro precisa permanecer salvo como LIVRE.
-    if(status === 'livre' && defaultStatusFor(seatId) === 'aluno'){
-      ok = await saveSeat(currentSessionId, seatId, {status:'livre',nome:'',telefone:'',email:'',obs:''});
-    } else if(status === defaultStatusFor(seatId)){
-      ok = await saveSeat(currentSessionId, seatId, null);
+    if(status === defaultStatusFor(seatId)){
+      await saveSeat(currentSessionId, seatId, null);
     } else {
-      ok = await saveSeat(currentSessionId, seatId, { status, nome, telefone, email, obs });
+      await saveSeat(currentSessionId, seatId, { status, nome, telefone, email, obs });
     }
-    if(!ok) return;
     overlay.remove();
     showToast('Assento atualizado');
   });
@@ -1565,8 +1337,7 @@ async function openSeatModal(seatId){
 
 /* ---------- Ingresso (imprimir / e-mail) ---------- */
 function ticketCode(sessionId, seatId){
-  const label = displaySeatLabel(seatId, 'vendido', SEATS_CACHE[currentSessionId] || {}) || seatId;
-  return sessionId+'-'+label;
+  return sessionId+'-'+seatId;
 }
 function findShowAndSession(sessionId){
   for(const show of CONFIG.shows){
@@ -1598,7 +1369,7 @@ function buildTicketHtml({seatId, show, session, nome, status}){
           <div class="ticket-info"><small>Data</small><strong>${dateText}</strong></div>
           <div class="ticket-info"><small>Horário</small><strong>${escapeHtml(timeText)}</strong></div>
           <div class="ticket-info"><small>Sessão</small><strong>${escapeHtml(sessionLabel(session))}</strong></div>
-          <div class="ticket-info seat"><small>Assento</small><strong>${escapeHtml(displaySeatLabel(seatId, status, SEATS_CACHE[currentSessionId] || {})||seatId)}</strong></div>
+          <div class="ticket-info seat"><small>Assento</small><strong>${escapeHtml(seatId)}</strong></div>
         </div>
         <p class="ticket-person">Ingresso de <b>${escapeHtml(nome||'Visitante')}</b></p>
         <div class="ticket-bottom">
@@ -1661,33 +1432,6 @@ async function printSelectedTickets(sessionId, ids){
   window.print();
   if(skipped>0) showToast(skipped + ' assento(s) ignorado(s) por não estarem vendidos');
 }
-async function buildTicketPdfDataUrl(info){
-  const holder=document.createElement('div');
-  holder.style.position='fixed'; holder.style.left='-100000px'; holder.style.top='0'; holder.style.width='794px'; holder.style.background='#fff'; holder.style.padding='0'; holder.style.zIndex='-1';
-  holder.innerHTML=buildTicketHtml(info);
-  document.body.appendChild(holder);
-  try{
-    await waitForImages(holder,4000);
-    const ticket=holder.querySelector('.ticket');
-    if(!ticket) throw new Error('Ingresso não encontrado');
-    const {jsPDF}=window.jspdf||{}; if(!jsPDF) throw new Error('jsPDF não carregado');
-    // PDF A4 com o ingresso preservando a proporção visual.
-    const canvas=document.createElement('canvas');
-    const rect=ticket.getBoundingClientRect();
-    const scale=2;
-    canvas.width=Math.max(1,Math.round(rect.width*scale)); canvas.height=Math.max(1,Math.round(rect.height*scale));
-    const ctx=canvas.getContext('2d');
-    ctx.fillStyle='#111'; ctx.fillRect(0,0,canvas.width,canvas.height);
-    const svg=`<svg xmlns="http://www.w3.org/2000/svg" width="${rect.width}" height="${rect.height}"><foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml">${ticket.outerHTML}</div></foreignObject></svg>`;
-    const blob=new Blob([svg],{type:'image/svg+xml;charset=utf-8'}); const url=URL.createObjectURL(blob);
-    await new Promise((resolve,reject)=>{ const img=new Image(); img.onload=()=>{ctx.drawImage(img,0,0,canvas.width,canvas.height); URL.revokeObjectURL(url); resolve();}; img.onerror=reject; img.src=url; });
-    const pdf=new jsPDF({orientation:'portrait',unit:'mm',format:'a4'});
-    const pageW=210, margin=10, w=pageW-margin*2, h=w*(canvas.height/canvas.width);
-    pdf.addImage(canvas.toDataURL('image/jpeg',0.94),'JPEG',margin,margin,w,Math.min(h,277));
-    return pdf.output('datauristring');
-  }finally{ holder.remove(); }
-}
-
 async function sendTicketEmail(info){
   if(!EMAILJS_READY){
     showToast('Configure o EmailJS primeiro (veja instruções no arquivo)');
@@ -1696,7 +1440,6 @@ async function sendTicketEmail(info){
   if(!info.email){ showToast('Este comprador não tem e-mail salvo'); return; }
   const code = ticketCode(currentSessionId, info.seatId);
   try{
-    const pdfData = await buildTicketPdfDataUrl(info);
     await emailjs.send(emailjsConfig.serviceId, emailjsConfig.templateId, {
       to_email: info.email,
       to_name: info.nome || '',
@@ -1704,8 +1447,7 @@ async function sendTicketEmail(info){
       session_label: sessionLabel(info.session),
       seat_id: info.seatId,
       ticket_code: code,
-      status_label: 'Pago',
-      ticket_pdf: pdfData
+      status_label: 'Pago'
     });
     showToast('E-mail enviado para ' + info.email);
   }catch(e){
@@ -1996,8 +1738,7 @@ async function handleScannedText(text){
   // Os IDs internos das sessões são mantidos como foram salvos no Firebase.
   const rawSessionId = code.slice(0, idx).trim();
   const sessionId = rawSessionId.toLowerCase();
-  const rawSeatLabel = code.slice(idx+1).trim().toUpperCase();
-  const seatId = physicalSeatIdFromDisplayLabel(rawSeatLabel) || rawSeatLabel;
+  const seatId = code.slice(idx+1).trim().toUpperCase();
   const found = findShowAndSession(sessionId);
   if(!found){
     resultBox.innerHTML = `<div class="scan-banner invalid">❌ Sessão não encontrada — pode ser de outro evento</div>`;
@@ -2010,25 +1751,22 @@ async function handleScannedText(text){
   }catch(e){ seat = null; }
 
   if(!seat || seat.status!=='vendido'){
-    const shownSeat = displaySeatLabel(seatId, seat && seat.status ? seat.status : 'vendido', SEATS_CACHE[currentSessionId] || {}) || rawSeatLabel || seatId;
     const msg = seat && seat.status==='aluno'
-      ? `🎓 Assento ${shownSeat} é reservado para aluno e não possui ingresso/check-in.`
-      : `❌ Assento ${shownSeat} não consta como vendido`;
+      ? `🎓 Assento ${seatId} é reservado para aluno e não possui ingresso/check-in.`
+      : `❌ Assento ${seatId} não consta como vendido`;
     resultBox.innerHTML = `<div class="scan-banner invalid">${msg}</div>`;
     addCheckinLog(seatId, found, null, 'invalido');
     return;
   }
   if(seat.checkin){
     const hora = new Date(seat.checkinAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-    const shownSeat = displaySeatLabel(seatId, seat.status, SEATS_CACHE[currentSessionId] || {}) || rawSeatLabel || seatId;
-    resultBox.innerHTML = `<div class="scan-banner warn">⚠️ Já tinha dado entrada às ${hora} — ${escapeHtml(seat.nome||'')} — Assento ${shownSeat}</div>`;
+    resultBox.innerHTML = `<div class="scan-banner warn">⚠️ Já tinha dado entrada às ${hora} — ${escapeHtml(seat.nome||'')} — Assento ${seatId}</div>`;
     addCheckinLog(seatId, found, seat, 'repetido');
     return;
   }
   const updated = Object.assign({}, seat, { checkin:true, checkinAt: Date.now() });
   await db.ref('seats/'+sessionId+'/'+seatId).set(updated);
-  const shownSeat = displaySeatLabel(seatId, seat.status, SEATS_CACHE[currentSessionId] || {}) || rawSeatLabel || seatId;
-  resultBox.innerHTML = `<div class="scan-banner ok">✅ Entrada confirmada — ${escapeHtml(seat.nome||'')} — Assento ${shownSeat} — ${escapeHtml(found.show.name)}</div>`;
+  resultBox.innerHTML = `<div class="scan-banner ok">✅ Entrada confirmada — ${escapeHtml(seat.nome||'')} — Assento ${seatId} — ${escapeHtml(found.show.name)}</div>`;
   addCheckinLog(seatId, found, updated, 'ok');
 }
 
@@ -2036,8 +1774,7 @@ const checkinLogEntries = [];
 function addCheckinLog(seatId, found, seat, kind){
   const log = document.getElementById('checkinLog');
   if(!log) return;
-  const shownSeat = displaySeatLabel(seatId, seat && seat.status ? seat.status : 'vendido', SEATS_CACHE[currentSessionId] || {}) || seatId;
-  checkinLogEntries.unshift({ time: new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}), seatId: shownSeat, showName: found.show.name, nome: seat ? seat.nome : '', kind });
+  checkinLogEntries.unshift({ time: new Date().toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}), seatId, showName: found.show.name, nome: seat ? seat.nome : '', kind });
   log.innerHTML = '<div class="found-list">' + checkinLogEntries.slice(0,15).map(e=>
     `<div class="found-item"><span>${e.time} — Assento <b>${e.seatId}</b> — ${escapeHtml(e.nome||'—')} (${escapeHtml(e.showName)})</span><span class="badge ${e.kind==='ok'?'vendido':'indisponivel'}">${e.kind==='ok'?'entrou':e.kind==='repetido'?'repetido':'inválido'}</span></div>`
   ).join('') + '</div>';
@@ -2148,9 +1885,6 @@ function renderSetupScreen(){
   }
   await loadConfig();
   await migrateGlobalUnavailable();
-  await migrateSeatLayoutV3();
-  await migrateSequentialSeatNumbering();
-  dynamicSeatNumberSignature = '';
   switchTab('publico');
   attachGlobalUnavailableListener();
 })();
