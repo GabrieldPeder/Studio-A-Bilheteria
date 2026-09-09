@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Studio A — Bilheteria</title>
+<meta name="studio-a-build" content="2026-09-09-fix-layout-alunos-v3">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Studio A">
@@ -824,7 +825,7 @@ function renderSeatMap(seats, readonly){
     for(let n=layout.left+1;n<=layout.left+layout.center;n++) html += seatHtml(seats,readonly,r,n);
     html += '</div><div class="aisle-fixed"></div><div class="right-block">';
     for(let i=1;i<=MAX_RIGHT_BLOCK;i++){
-      if(i<=layout.right) html += seatHtml(seats,readonly,r,layout.left+layout.center+i-1);
+      if(i<=layout.right) html += seatHtml(seats,readonly,r,layout.left+layout.center+i);
       else html += '<div class="seat stair-empty"></div>';
     }
     html += '</div></div>';
@@ -1054,7 +1055,7 @@ function renderPriceMap(){
     for(let n=layout.left+1;n<=layout.left+layout.center;n++){ const id=seatIdFor(r,n); const price=(CONFIG.prices&&CONFIG.prices[id]!=null)?CONFIG.prices[id]:null; const sel=priceSelectedSeats.has(id)?'selected':''; const noPrice=price==null?'no-price':''; html+=`<div class="seat price-seat ${sel} ${noPrice}" data-price-seat="${id}" title="${id}">${price!=null?Math.round(price):''}</div>`; }
     html += '</div><div class="aisle-fixed"></div><div class="right-block">';
     for(let i=1;i<=MAX_RIGHT_BLOCK;i++){
-      if(i<=layout.right){ const local=layout.left+layout.center+i-1; const id=seatIdFor(r,local); const price=(CONFIG.prices&&CONFIG.prices[id]!=null)?CONFIG.prices[id]:null; const sel=priceSelectedSeats.has(id)?'selected':''; const noPrice=price==null?'no-price':''; html+=`<div class="seat price-seat ${sel} ${noPrice}" data-price-seat="${id}" title="${id}">${price!=null?Math.round(price):''}</div>`; }
+      if(i<=layout.right){ const local=layout.left+layout.center+i; const id=seatIdFor(r,local); const price=(CONFIG.prices&&CONFIG.prices[id]!=null)?CONFIG.prices[id]:null; const sel=priceSelectedSeats.has(id)?'selected':''; const noPrice=price==null?'no-price':''; html+=`<div class="seat price-seat ${sel} ${noPrice}" data-price-seat="${id}" title="${id}">${price!=null?Math.round(price):''}</div>`; }
       else html+='<div class="seat stair-empty"></div>';
     }
     html += '</div></div>';
