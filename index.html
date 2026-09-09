@@ -7,6 +7,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Studio A">
+<meta name="studio-a-build" content="2026-09-09-right-seat-release-v2">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:wght@500;600;700&family=Work+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
@@ -679,8 +680,20 @@ async function saveSeat(sessionId, seatId, seatData){
     }
     if(isGlobalUnavailable(seatId)) await setGlobalUnavailable(seatId, false);
     if(seatData === null){
-      await db.ref('seats/'+sessionId+'/'+seatId).remove();
-      if(SEATS_CACHE[sessionId]) delete SEATS_CACHE[sessionId][seatId];
+      // ATENÇÃO: nas laterais direitas o estado padrão é ALUNO.
+      // Portanto, remover o registro faria a cadeira voltar imediatamente
+      // para ALUNO. Ao liberar explicitamente uma cadeira da direita,
+      // persistimos LIVRE para que ela continue vendível e seja contabilizada.
+      const releaseAsSellable = defaultStatusFor(seatId) === 'aluno';
+      if(releaseAsSellable){
+        const released = {status:'livre',nome:'',telefone:'',email:'',obs:''};
+        await db.ref('seats/'+sessionId+'/'+seatId).set(released);
+        SEATS_CACHE[sessionId] = SEATS_CACHE[sessionId] || {};
+        SEATS_CACHE[sessionId][seatId] = released;
+      } else {
+        await db.ref('seats/'+sessionId+'/'+seatId).remove();
+        if(SEATS_CACHE[sessionId]) delete SEATS_CACHE[sessionId][seatId];
+      }
       await logHistory(sessionId, seatId, { status:'livre', nome:'', at: Date.now(), by: currentUser?currentUser.email:'?' });
     } else {
       await db.ref('seats/'+sessionId+'/'+seatId).set(seatData);
@@ -1301,6 +1314,9 @@ function openBulkStatusModal(){
           const ref=db.ref('seats/'+currentSessionId+'/'+id);
           if(status==='vendido') return ref.set({status:'vendido',nome,telefone,email,obs});
           if(status==='aluno') return ref.set({status:'aluno',nome:'',telefone:'',email:'',obs:''});
+          // 'Livre' precisa ser explícito quando a cadeira pertence à
+          // lateral direita, pois o estado padrão dessa região é ALUNO.
+          if(defaultStatusFor(id)==='aluno') return ref.set({status:'livre',nome:'',telefone:'',email:'',obs:''});
           return ref.remove();
         }));
         const seatFailed = seatResults.filter(r=>r.status==='rejected');
@@ -1486,7 +1502,11 @@ async function openSeatModal(seatId){
     const email = overlay.querySelector('#fEmail').value.trim();
     const obs = overlay.querySelector('#fObs').value.trim();
     let ok=false;
-    if(status === defaultStatusFor(seatId)){
+    // Nunca use remove() para 'Livre' em uma cadeira cujo padrão é ALUNO.
+    // Nesse caso o registro precisa permanecer salvo como LIVRE.
+    if(status === 'livre' && defaultStatusFor(seatId) === 'aluno'){
+      ok = await saveSeat(currentSessionId, seatId, {status:'livre',nome:'',telefone:'',email:'',obs:''});
+    } else if(status === defaultStatusFor(seatId)){
       ok = await saveSeat(currentSessionId, seatId, null);
     } else {
       ok = await saveSeat(currentSessionId, seatId, { status, nome, telefone, email, obs });
