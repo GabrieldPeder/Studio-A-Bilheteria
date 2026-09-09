@@ -649,6 +649,9 @@ function attachGlobalUnavailableListener(){
   globalUnavailableRef.on('value', snap=>{
     if(!CONFIG) return;
     CONFIG.globalUnavailable = snap.val() || {};
+    dynamicSeatNumberSignature = '';
+    dynamicSeatNumberMap = new Map();
+    dynamicSeatReverseMap = new Map();
     if(currentTab==='publico') renderPublico();
     else if(currentTab==='painel' && currentUser) renderPainel();
   });
@@ -721,38 +724,45 @@ function rowIndexFromSeatId(seatId){ const letter=seatRowLetter(seatId); return 
 function localSeatNumberFromGlobal(seatId){ const r=rowIndexFromSeatId(seatId); const n=seatColumn(seatId); return r<0 ? 0 : n-rowStart(r)+1; }
 function blockOf(seatId){ const r=rowIndexFromSeatId(seatId); const x=roomRow(r); const local=localSeatNumberFromGlobal(seatId); if(local<=x.left) return 'left'; if(local<=x.left+x.center) return 'center'; return 'right'; }
 function defaultStatusFor(seatId){ const r=rowIndexFromSeatId(seatId); if(r<0) return 'livre'; const x=roomRow(r); const local=localSeatNumberFromGlobal(seatId); return local>x.left+x.center ? 'aluno' : 'livre'; }
-// Numeração comercial: somente os lugares vendíveis recebem número.
-// Os assentos de aluno nunca recebem número; indisponíveis também não exibem número.
-// A numeração é estável e sequencial por fileira, sem renumerar os demais assentos
-// quando um lugar vendível é temporariamente marcado como indisponível.
-const SELLABLE_ROW_START = (()=>{
-  const starts=[]; let n=1;
-  ROOM_LAYOUT.forEach(x=>{ starts.push(n); n += x.left + x.center; });
-  return starts;
-})();
-const TOTAL_SELLABLE_SEATS = ROOM_LAYOUT.reduce((acc,x)=>acc+x.left+x.center,0);
+// Numeração comercial DINÂMICA: somente os lugares atualmente vendíveis recebem número.
+// Alunos e indisponíveis nunca entram na numeração. Ao bloquear/liberar uma cadeira,
+// os números são recalculados automaticamente a partir das cadeiras vendíveis.
+let dynamicSeatNumberMap = new Map();
+let dynamicSeatReverseMap = new Map();
+let dynamicSeatNumberSignature = '';
+function rebuildDynamicSeatNumbers(){
+  const unavailable = CONFIG && CONFIG.globalUnavailable ? CONFIG.globalUnavailable : {};
+  const sig = Object.keys(unavailable).filter(k=>unavailable[k]).sort().join('|');
+  if(sig===dynamicSeatNumberSignature && dynamicSeatNumberMap.size) return;
+  dynamicSeatNumberSignature = sig;
+  dynamicSeatNumberMap = new Map();
+  dynamicSeatReverseMap = new Map();
+  let n=1;
+  ROOM_LAYOUT.forEach((x,r)=>{
+    // Somente lateral esquerda + centro são vendíveis. A direita é área de alunos.
+    for(let local=1;local<=x.left+x.center;local++){
+      const id=seatIdFor(r,local);
+      if(isGlobalUnavailable(id)) continue;
+      const label=x.row+n;
+      dynamicSeatNumberMap.set(id,label);
+      dynamicSeatReverseMap.set(label,id);
+      n++;
+    }
+  });
+}
 function sellableNumberForSeat(seatId){
-  const r=rowIndexFromSeatId(seatId);
-  if(r<0) return null;
-  const x=roomRow(r);
-  const local=localSeatNumberFromGlobal(seatId);
-  if(local<1 || local>x.left+x.center) return null;
-  return SELLABLE_ROW_START[r] + local - 1;
+  rebuildDynamicSeatNumbers();
+  const label=dynamicSeatNumberMap.get(seatId);
+  return label ? Number(label.replace(/^[A-Z]+/,'')) : null;
 }
 function displaySeatLabel(seatId, status){
-  if(status==='aluno' || status==='indisponivel') return '';
-  const n=sellableNumberForSeat(seatId);
-  const r=rowIndexFromSeatId(seatId);
-  return n==null || r<0 ? '' : roomRow(r).row+n;
+  if(status==='aluno' || status==='indisponivel' || isGlobalUnavailable(seatId)) return '';
+  rebuildDynamicSeatNumbers();
+  return dynamicSeatNumberMap.get(seatId) || '';
 }
 function physicalSeatIdFromDisplayLabel(label){
-  const m=String(label||'').trim().toUpperCase().match(/^([A-Z]+)(\d+)$/);
-  if(!m) return null;
-  const r=ROOM_LAYOUT.findIndex(x=>x.row===m[1]);
-  const number=Number(m[2]);
-  if(r<0 || number<SELLABLE_ROW_START[r] || number>=SELLABLE_ROW_START[r]+roomRow(r).left+roomRow(r).center) return null;
-  const local=number-SELLABLE_ROW_START[r]+1;
-  return seatIdFor(r,local);
+  rebuildDynamicSeatNumbers();
+  return dynamicSeatReverseMap.get(String(label||'').trim().toUpperCase()) || null;
 }
 function seatIdsForRow(r){ const ids=[]; for(let n=1;n<=rowWidth(r);n++) ids.push(seatIdFor(r,n)); return ids; }
 function seatHtml(seats, readonly, r, local){
@@ -1254,40 +1264,32 @@ function openBulkStatusModal(){
     const btn = overlay.querySelector('#bsSalvar');
     btn.disabled = true;
     try{
+      const now = Date.now();
+      // A alteração principal é gravada separadamente do histórico. Assim, uma regra
+      // de segurança que bloqueie /history não impede a seleção múltipla.
       if(status==='indisponivel'){
         const updates = {};
-        const now = Date.now();
-        ids.forEach(id=>{
-          updates['config/globalUnavailable/'+id] = true;
-          const hKey = db.ref('history/'+currentSessionId+'/'+id).push().key;
-          updates['history/'+currentSessionId+'/'+id+'/'+hKey] = {status:'indisponivel',nome:'',at:now,by:currentUser?currentUser.email:'?'};
-          CONFIG.globalUnavailable = CONFIG.globalUnavailable || {};
-          CONFIG.globalUnavailable[id] = true;
-        });
+        ids.forEach(id=>{ updates['config/globalUnavailable/'+id] = true; });
         await db.ref().update(updates);
+        CONFIG.globalUnavailable = CONFIG.globalUnavailable || {};
+        ids.forEach(id=>{ CONFIG.globalUnavailable[id] = true; });
       } else {
-        // Ao aplicar qualquer outro status, remove eventual indisponibilidade global dessas cadeiras.
-        const globalUpdates = {};
-        ids.forEach(id=>{
-          if(isGlobalUnavailable(id)){
-            globalUpdates['config/globalUnavailable/'+id] = null;
-            delete CONFIG.globalUnavailable[id];
-          }
-        });
-        if(Object.keys(globalUpdates).length) await db.ref().update(globalUpdates);
         const updates = {};
-        const now = Date.now();
         ids.forEach(id=>{
-          let data;
-          if(status==='vendido') data = {status:'vendido',nome,telefone,email,obs};
-          else if(status==='aluno') data = {status:'aluno',nome:'',telefone:'',email:'',obs:''};
-          else data = {status:'livre',nome:'',telefone:'',email:'',obs:''};
-          updates['seats/'+currentSessionId+'/'+id] = data;
-          const hKey = db.ref('history/'+currentSessionId+'/'+id).push().key;
-          updates['history/'+currentSessionId+'/'+id+'/'+hKey] = {status:status,nome:status==='vendido'?nome:'',at:now,by:currentUser?currentUser.email:'?'};
+          if(isGlobalUnavailable(id)) updates['config/globalUnavailable/'+id] = null;
+          if(status==='vendido') updates['seats/'+currentSessionId+'/'+id] = {status:'vendido',nome,telefone,email,obs};
+          else if(status==='aluno') updates['seats/'+currentSessionId+'/'+id] = {status:'aluno',nome:'',telefone:'',email:'',obs:''};
+          else updates['seats/'+currentSessionId+'/'+id] = null;
         });
         await db.ref().update(updates);
+        CONFIG.globalUnavailable = CONFIG.globalUnavailable || {};
+        ids.forEach(id=>{ delete CONFIG.globalUnavailable[id]; });
       }
+      dynamicSeatNumberSignature = '';
+      dynamicSeatNumberMap = new Map();
+      dynamicSeatReverseMap = new Map();
+      // Histórico é secundário: falha de permissão não desfaz a alteração dos assentos.
+      await Promise.all(ids.map(id=>logHistory(currentSessionId,id,{status,nome:status==='vendido'?nome:'',at:now,by:currentUser?currentUser.email:'?'})));
       reportCache = {};
       overlay.remove();
       selectedSeats.clear();
@@ -1322,7 +1324,8 @@ async function openWaitlistModal(sessionId){
   document.body.appendChild(overlay);
   const itemsBox=overlay.querySelector('#waitlistItems');
   const statusBox=overlay.querySelector('#waitlistStatus');
-  const waitRef=db.ref('waitlist/'+sessionId);
+  let waitRef=db.ref('waitlist/'+sessionId);
+  let waitPath='waitlist';
   let active=true;
   const renderEntries=(val)=>{
     const entries=Object.entries(val||{}).sort((a,b)=>Number(a[1]?.at||0)-Number(b[1]?.at||0));
@@ -1334,7 +1337,18 @@ async function openWaitlistModal(sessionId){
     }));
   };
   const onValue=snap=>{if(active)renderEntries(snap.val()||{});};
-  const onError=err=>{itemsBox.innerHTML='<div class="empty">Não foi possível carregar a fila de espera. '+escapeHtml(err?.message||'Verifique as regras do Firebase.')+'</div>';};
+  const onError=err=>{
+    if(active && waitPath==='waitlist' && (err?.code==='PERMISSION_DENIED' || /permission denied/i.test(err?.message||''))){
+      waitRef.off('value',onValue);
+      waitRef=db.ref('config/waitlist/'+sessionId);
+      waitPath='config/waitlist';
+      waitRef.on('value',onValue,finalErr=>{
+        itemsBox.innerHTML='<div class="empty">Não foi possível carregar a fila de espera. '+escapeHtml(finalErr?.message||'Verifique as regras do Firebase para /waitlist ou /config/waitlist.')+'</div>';
+      });
+      return;
+    }
+    itemsBox.innerHTML='<div class="empty">Não foi possível carregar a fila de espera. '+escapeHtml(err?.message||'Verifique as regras do Firebase.')+'</div>';
+  };
   waitRef.on('value',onValue,onError);
   const close=()=>{if(!active)return;active=false;waitRef.off('value',onValue);overlay.remove();};
   overlay.querySelector('#btnFecharWaitlist').addEventListener('click',close);
