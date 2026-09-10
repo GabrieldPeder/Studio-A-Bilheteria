@@ -14,6 +14,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-auth-compat.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
 <style>
   :root{
     --bg: #0c0a0d;
@@ -98,17 +100,18 @@
   .row-label{width:18px; font-size:11px; color:var(--muted); font-weight:700; text-align:center;}
   .seat{
     width:20px; height:19px; border-radius:5px 5px 3px 3px; border:1px solid rgba(0,0,0,.3);
-    background:var(--seat-free); cursor:pointer; font-size:8px; color:transparent;
+    background:var(--seat-free); cursor:pointer; font-size:6.5px; font-weight:700; color:rgba(255,255,255,.55);
+    display:flex; align-items:center; justify-content:center; line-height:1;
     transition:.12s; flex:0 0 auto;
   }
   .seat.aisle-gap{background:transparent; border:none; cursor:default; width:16px;}
   .seat:hover:not(.aisle-gap):not(.readonly){background:var(--seat-free-hover); transform:translateY(-1px);}
   .seat.reservado{background:var(--seat-reserved);}
   .seat.indisponivel{
-    background:var(--seat-indisponivel); color:#fff; display:flex; align-items:center; justify-content:center;
+    background:var(--seat-indisponivel); color:#fff;
     font-size:11px; font-weight:800; cursor:pointer;
   }
-  .seat.vendido{background:var(--seat-sold);}
+  .seat.vendido, .seat.convidado{background:var(--seat-sold); color:#fff;}
   .seat.aluno{
     background: repeating-linear-gradient(45deg, var(--seat-aluno), var(--seat-aluno) 3px, #14111a 3px, #14111a 6px);
     border-color:rgba(255,255,255,.08);
@@ -193,9 +196,10 @@
 
   .badge{display:inline-block; padding:2px 8px; border-radius:20px; font-size:11px; font-weight:700;}
   .badge.reservado{background:rgba(240,196,25,.18); color:#f0c419;}
-  .badge.vendido{background:rgba(228,19,111,.22); color:var(--pink-soft);}
+  .badge.vendido, .badge.convidado{background:rgba(228,19,111,.22); color:var(--pink-soft);}
   .badge.indisponivel{background:rgba(224,41,41,.2); color:#f0a3b3;}
   .badge.livre{background:rgba(255,255,255,.08); color:var(--muted);}
+  .badge.aluno{background:rgba(255,255,255,.08); color:var(--muted);}
 
   .toast{position:fixed; bottom:22px; left:50%; transform:translateX(-50%); background:var(--pink); color:#210a15; padding:10px 18px; border-radius:8px; font-weight:600; font-size:13px; box-shadow:var(--shadow); z-index:60; opacity:0; pointer-events:none; transition:.25s;}
   .toast.show{opacity:1; transform:translate(-50%,-6px);}
@@ -242,7 +246,7 @@
     .summary{gap:14px;}
     .summary .stat b{font-size:21px;}
     .seatmap{padding:6px 2px 10px;}
-    .seat{width:13px; height:12px; border-radius:3px 3px 2px 2px;}
+    .seat{width:13px; height:12px; border-radius:3px 3px 2px 2px; font-size:5px;}
     .seat-row{gap:3px;}
     .aisle-gap{width:9px;}
     .row-label{width:12px; font-size:8px;}
@@ -572,6 +576,7 @@ async function loadConfig(){
   if(!CONFIG.shows) CONFIG.shows = [];
   if(!CONFIG.prices) CONFIG.prices = {};
   if(!CONFIG.globalUnavailable) CONFIG.globalUnavailable = {};
+  loadRoomLayoutFromConfig();
   if(!currentShowId && CONFIG.shows.length) currentShowId = CONFIG.shows[0].id;
   syncCurrentSession();
 }
@@ -683,11 +688,13 @@ function logHistory(sessionId, seatId, entry){
   return db.ref('history/'+sessionId+'/'+seatId).push(entry).catch(()=>{});
 }
 function statusLabel(st){
-  return st==='vendido' ? 'Vendido' : st==='indisponivel' ? 'Indisponível' : 'Liberado';
+  return st==='vendido' ? 'Vendido' : st==='convidado' ? 'Convidado' : st==='indisponivel' ? 'Indisponível' : st==='aluno' ? 'Aluno' : 'Liberado';
 }
 
 /* ---------- Layout da sala — laterais em escada ---------- */
-const ROOM_LAYOUT = [
+// Layout padrão (usado na primeira vez, antes de qualquer edição em Configurações da sala).
+// Corrigido: a última fileira (L) tem só 8 lugares no centro (e fica centralizada nessa fileira).
+const DEFAULT_ROOM_LAYOUT = [
   {row:'A', left:2, center:15, right:2},
   {row:'B', left:3, center:15, right:3},
   {row:'C', left:5, center:15, right:4},
@@ -699,8 +706,62 @@ const ROOM_LAYOUT = [
   {row:'I', left:7, center:15, right:8},
   {row:'J', left:6, center:15, right:8},
   {row:'K', left:6, center:15, right:8},
-  {row:'L', left:4, center:15, right:8}
+  {row:'L', left:4, center:8, right:8}
 ];
+// ROOM_LAYOUT agora é editável (Configurações da sala) e fica salvo em CONFIG.roomLayout no Firebase.
+// É um "let" porque pode ser trocado por um layout carregado da configuração ou editado em tempo de uso.
+let ROOM_LAYOUT = JSON.parse(JSON.stringify(DEFAULT_ROOM_LAYOUT));
+function loadRoomLayoutFromConfig(){
+  if(CONFIG && Array.isArray(CONFIG.roomLayout) && CONFIG.roomLayout.length){
+    ROOM_LAYOUT = CONFIG.roomLayout;
+  } else {
+    ROOM_LAYOUT = JSON.parse(JSON.stringify(DEFAULT_ROOM_LAYOUT));
+    if(CONFIG) CONFIG.roomLayout = ROOM_LAYOUT;
+  }
+}
+async function saveRoomLayout(){
+  CONFIG.roomLayout = ROOM_LAYOUT;
+  await saveConfig();
+}
+function totalPhysicalSeats(){
+  return ROOM_LAYOUT.reduce((sum,x)=> sum + x.left + x.center + x.right, 0);
+}
+function totalUnavailableSeats(){
+  if(!CONFIG || !CONFIG.globalUnavailable) return 0;
+  // conta só as que realmente existem no layout atual
+  let n = 0;
+  ROOM_LAYOUT.forEach(layout=>{
+    const width = layout.left + layout.center + layout.right;
+    for(let col=1; col<=width; col++){ if(CONFIG.globalUnavailable[layout.row+col]) n++; }
+  });
+  return n;
+}
+// Numeração sequencial de cadeiras (1..N) que atravessa as fileiras (A, B, C... Z), sem reiniciar a
+// numeração em cada fileira. Cadeiras marcadas como "Indisponível" (removida globalmente) OU como
+// "Aluno" (reservada, não é vendida ao público) não contam nessa numeração — por isso o número total
+// muda dinamicamente ao adicionar/remover cadeiras ou ao liberar/reservar uma cadeira de aluno.
+// "seats" é opcional: se não for passado, usa os dados da sessão atualmente selecionada.
+function computeSeatNumberMap(seats){
+  const data = seats || SEATS_CACHE[currentSessionId] || {};
+  const map = {};
+  let n = 0;
+  ROOM_LAYOUT.forEach(layout=>{
+    const width = layout.left + layout.center + layout.right;
+    for(let col=1; col<=width; col++){
+      const id = layout.row + col;
+      const st = effectiveSeatStatus(data, id);
+      if(st==='indisponivel' || st==='aluno') continue;
+      n++;
+      map[id] = n;
+    }
+  });
+  return { map, total: n };
+}
+function seatDisplayLabel(seatId, numberMap){
+  const map = numberMap || computeSeatNumberMap().map;
+  const n = map[seatId];
+  return n!=null ? (seatRowLetter(seatId) + n) : seatId;
+}
 function roomRow(r){ return ROOM_LAYOUT[r] || {row:rowLetter(r), left:7, center:15, right:8}; }
 function rowWidth(r){ const x=roomRow(r); return x.left+x.center+x.right; }
 function blockOf(n, r){ const x=roomRow(r); if(n<=x.left) return 'left'; if(n<=x.left+x.center) return 'center'; return 'right'; }
@@ -712,48 +773,58 @@ function seatIdFor(r,n){ return roomRow(r).row+n; }
 function renderSeatMap(seats, readonly){
   const maxLeft = Math.max(...ROOM_LAYOUT.map(x=>x.left));
   const maxRight = Math.max(...ROOM_LAYOUT.map(x=>x.right));
+  const maxCenter = Math.max(...ROOM_LAYOUT.map(x=>x.center));
+  const numberMap = computeSeatNumberMap(seats).map;
   let html = '<div class="stage-wrap"><div class="stage"><span>Palco</span></div><div class="seatmap stair-seatmap">';
   ROOM_LAYOUT.forEach((layout,r)=>{
     html += `<div class="seat-row stair-row" data-row="${layout.row}"><div class="row-label">${layout.row}</div>`;
     const leftPad = maxLeft-layout.left;
     const rightPad = maxRight-layout.right;
+    // Se essa fileira tem menos cadeiras no centro que o máximo (ex: última fileira com 8 em vez de 15),
+    // preenche os dois lados com espaços invisíveis pra ficar centralizada em relação às outras fileiras.
+    const centerGap = maxCenter - layout.center;
+    const centerPadLeft = Math.floor(centerGap/2);
+    const centerPadRight = Math.ceil(centerGap/2);
     for(let i=0;i<leftPad;i++) html += '<div class="seat stair-empty"></div>';
     for(let n=1;n<=layout.left;n++){
-      const id=layout.row+n, st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
+      const id=layout.row+n, st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, num=numberMap[id], mark=st==='indisponivel'?'✕':(num!=null?String(num):''), who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', numTxt=num!=null?(' — Nº '+num):'', title=(st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who)+numTxt;
       html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}</div>`;
     }
     html += '<div class="seat aisle-gap"></div>';
+    for(let i=0;i<centerPadLeft;i++) html += '<div class="seat stair-empty"></div>';
     for(let n=layout.left+1;n<=layout.left+layout.center;n++){
-      const id=layout.row+n, st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
+      const id=layout.row+n, st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, num=numberMap[id], mark=st==='indisponivel'?'✕':(num!=null?String(num):''), who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', numTxt=num!=null?(' — Nº '+num):'', title=(st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who)+numTxt;
       html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}</div>`;
     }
+    for(let i=0;i<centerPadRight;i++) html += '<div class="seat stair-empty"></div>';
     html += '<div class="seat aisle-gap"></div>';
     for(let n=layout.left+layout.center+1;n<=layout.left+layout.center+layout.right;n++){
-      const id=layout.row+n, st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, mark=st==='indisponivel'?'✕':'', who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', title=st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who;
+      const id=layout.row+n, st=effectiveSeatStatus(seats,id), cls=st==='livre'?'':st, num=numberMap[id], mark=st==='indisponivel'?'✕':(num!=null?String(num):''), who=seats[id]&&seats[id].nome?' — '+seats[id].nome:'', numTxt=num!=null?(' — Nº '+num):'', title=(st==='aluno'?id+' — reservado para alunos':id+' — '+statusLabel(st)+who)+numTxt;
       html += `<div class="seat ${cls} ${readonly?'readonly':''}" data-seat="${id}" title="${escapeHtml(title)}">${mark}</div>`;
     }
     for(let i=0;i<rightPad;i++) html += '<div class="seat stair-empty"></div>';
     html += '</div>';
   });
   html += '</div></div>';
-  html += `<div class="legend"><div class="item"><span class="swatch" style="background:var(--seat-free)"></span>Disponível</div><div class="item"><span class="swatch" style="background:var(--seat-sold)"></span>Vendido / Pago</div><div class="item"><span class="swatch" style="background:var(--seat-indisponivel)"></span>Indisponível</div><div class="item"><span class="swatch aluno-sw"></span>Reservado — alunos</div></div>`;
+  html += `<div class="legend"><div class="item"><span class="swatch" style="background:var(--seat-free)"></span>Disponível</div><div class="item"><span class="swatch" style="background:var(--seat-sold)"></span>Vendido / Pago / Convidado</div><div class="item"><span class="swatch" style="background:var(--seat-indisponivel)"></span>Indisponível</div><div class="item"><span class="swatch aluno-sw"></span>Reservado — alunos</div></div>`;
   return html;
 }
 
 function computeSummary(seats){
-  let livre=0, vendido=0, indisponivel=0, alunos=0;
+  let livre=0, vendido=0, convidado=0, indisponivel=0, alunos=0;
   for(let r=0;r<ROOM_LAYOUT.length;r++){
     for(let n=1;n<=rowWidth(r);n++){
       const id = seatIdFor(r,n);
       const st = effectiveSeatStatus(seats, id);
       if(st==='vendido') vendido++;
+      else if(st==='convidado') convidado++;
       else if(st==='indisponivel') indisponivel++;
       else if(st==='aluno') alunos++;
       else livre++;
     }
   }
-  const sellable = livre + vendido;
-  return {sellable, livre, indisponivel, vendido, alunos};
+  const sellable = livre + vendido + convidado;
+  return {sellable, livre, indisponivel, vendido, convidado, alunos};
 }
 
 function moneyBRL(value){
@@ -762,7 +833,7 @@ function moneyBRL(value){
 function sessionOccupancy(seats){
   const sum = computeSummary(seats||{});
   const totalRoom = sum.sellable;
-  const pct = totalRoom ? (sum.vendido / totalRoom) * 100 : 0;
+  const pct = totalRoom ? ((sum.vendido + sum.convidado) / totalRoom) * 100 : 0;
   return {sum,totalRoom,pct};
 }
 function renderSessionOverview(seats, found){
@@ -778,7 +849,7 @@ function renderSessionOverview(seats, found){
     <div class="occupancy">
       <div class="occupancy-head"><span>Lotação da sessão</span><strong>${occ.pct.toFixed(1).replace('.',',')}% ocupada</strong></div>
       <div class="occupancy-track"><div class="occupancy-fill" style="width:${Math.min(100,occ.pct).toFixed(2)}%"></div></div>
-      <div class="note">${occ.sum.vendido} vendidos de ${occ.totalRoom} lugares vendíveis</div>
+      <div class="note">${occ.sum.vendido} vendidos + ${occ.sum.convidado} convidados de ${occ.totalRoom} lugares vendíveis</div>
     </div>
   </div>`;
 }
@@ -791,7 +862,7 @@ async function getShowReport(show){
       SEATS_CACHE[se.id] = snap.val() || {};
     }catch(e){ SEATS_CACHE[se.id] = {}; }
   }));
-  let sold=0, checked=0, revenue=0, totalPlaces=0;
+  let sold=0, convidados=0, checked=0, revenue=0, totalPlaces=0;
   for(const se of sessions){
     const seats = SEATS_CACHE[se.id] || {};
     const sum = computeSummary(seats);
@@ -803,16 +874,20 @@ async function getShowReport(show){
         sold++;
         if(d.checkin) checked++;
         revenue += Number((CONFIG.prices && CONFIG.prices[id]) || 0);
+      } else if(d && d.status==='convidado'){
+        convidados++;
+        if(d.checkin) checked++;
       }
     });
   }
-  const occupancy = totalPlaces ? sold/totalPlaces*100 : 0;
+  const totalIngressos = sold + convidados;
+  const occupancy = totalPlaces ? totalIngressos/totalPlaces*100 : 0;
   const now = Date.now();
   const allEnded = sessions.length>0 && sessions.every(se=>{
     const d = new Date(se.date+'T'+(se.time||'00:00')+':00');
     return !isNaN(d.getTime()) && d.getTime() < now;
   });
-  return {sessions:sessions.length,totalPlaces,sold,checked,revenue,occupancy,missing:Math.max(0,sold-checked),allEnded};
+  return {sessions:sessions.length,totalPlaces,sold,convidados,totalIngressos,checked,revenue,occupancy,missing:Math.max(0,totalIngressos-checked),allEnded};
 }
 async function renderShowReport(showId){
   const box = document.getElementById('showReportArea');
@@ -837,13 +912,14 @@ function renderShowReportHtml(box, show, r){
     <div class="report-grid">
       <div class="report-stat"><span class="label">Lugares</span><span class="value">${r.totalPlaces}</span></div>
       <div class="report-stat"><span class="label">Vendidos</span><span class="value">${r.sold}</span></div>
+      <div class="report-stat"><span class="label">Convidados</span><span class="value">${r.convidados}</span></div>
       <div class="report-stat"><span class="label">Ocupação</span><span class="value">${r.occupancy.toFixed(1).replace('.',',')}%</span></div>
       <div class="report-stat money"><span class="label">Faturamento</span><span class="value">${moneyBRL(r.revenue)}</span></div>
       <div class="report-stat"><span class="label">Check-ins</span><span class="value">${r.checked}</span></div>
       <div class="report-stat"><span class="label">${missingLabel}</span><span class="value">${r.missing}</span></div>
     </div>
     <div class="report-progress">
-      <div class="occupancy-head"><span>Ocupação geral do espetáculo</span><strong>${r.sold} / ${r.totalPlaces} vendíveis</strong></div>
+      <div class="occupancy-head"><span>Ocupação geral do espetáculo</span><strong>${r.totalIngressos} / ${r.totalPlaces} vendíveis</strong></div>
       <div class="occupancy-track"><div class="occupancy-fill" style="width:${Math.min(100,r.occupancy).toFixed(2)}%"></div></div>
     </div>
   </div>`;
@@ -852,13 +928,18 @@ function renderShowReportHtml(box, show, r){
 let priceSelectedSeats = new Set();
 function renderPriceMap(){
   let html = '<div class="seatmap price-map stair-seatmap">';
-  for(let r=0;r<ROOM_LAYOUT.length;r++){ const layout=roomRow(r); html += `<div class="seat-row stair-row"><div class="row-label">${layout.row}</div>`; const maxLeft=Math.max(...ROOM_LAYOUT.map(x=>x.left)); const maxRight=Math.max(...ROOM_LAYOUT.map(x=>x.right)); for(let i=0;i<maxLeft-layout.left;i++) html+='<div class="seat stair-empty"></div>'; for(let n=1;n<=rowWidth(r);n++){
-      const id = rowLetter(r)+n;
+  const maxLeft=Math.max(...ROOM_LAYOUT.map(x=>x.left));
+  const maxCenter=Math.max(...ROOM_LAYOUT.map(x=>x.center));
+  const numberMap = computeSeatNumberMap().map;
+  for(let r=0;r<ROOM_LAYOUT.length;r++){ const layout=roomRow(r); html += `<div class="seat-row stair-row"><div class="row-label">${layout.row}</div>`; for(let i=0;i<maxLeft-layout.left;i++) html+='<div class="seat stair-empty"></div>'; const centerGap=maxCenter-layout.center; const centerPadLeft=Math.floor(centerGap/2), centerPadRight=Math.ceil(centerGap/2); for(let n=1;n<=rowWidth(r);n++){
+      const id = layout.row+n;
       const price = (CONFIG.prices && CONFIG.prices[id]!=null) ? CONFIG.prices[id] : null;
       const sel = priceSelectedSeats.has(id) ? 'selected' : '';
       const noPrice = price==null ? 'no-price' : '';
-      html += `<div class="seat price-seat ${sel} ${noPrice}" data-price-seat="${id}" title="${id}">${price!=null ? Math.round(price) : ''}</div>`;
-      if(n === layout.left || n === layout.left + layout.center){ html += '<div class="seat aisle-gap"></div>'; }
+      const num = numberMap[id];
+      html += `<div class="seat price-seat ${sel} ${noPrice}" data-price-seat="${id}" title="${id}${num!=null?(' — Nº '+num):''}">${price!=null ? Math.round(price) : ''}</div>`;
+      if(n === layout.left){ html += '<div class="seat aisle-gap"></div>'; for(let i=0;i<centerPadLeft;i++) html+='<div class="seat stair-empty"></div>'; }
+      if(n === layout.left + layout.center){ for(let i=0;i<centerPadRight;i++) html+='<div class="seat stair-empty"></div>'; html += '<div class="seat aisle-gap"></div>'; }
     }
     html += `</div>`;
   }
@@ -948,7 +1029,7 @@ async function renderPainel(){
     <h2>Painel de Controle — venda por atendente</h2>
     ${showSessionSelector()}
     <div class="row" style="margin-top:8px;">
-      <button class="btn ghost tiny" id="btnImprimirLote" type="button">🖨️ Imprimir ingressos vendidos desta sessão</button>
+      <button class="btn ghost tiny" id="btnImprimirLote" type="button">🖨️ Imprimir ingressos vendidos/convidados desta sessão</button>
       <button class="btn ghost tiny" id="btnListaEspera" type="button">📋 Lista de espera</button>
       <button class="btn ${selectionMode?'gold':'ghost'} tiny" id="btnToggleSelection" type="button">☑️ ${selectionMode ? 'Sair da seleção múltipla' : 'Selecionar vários assentos'}</button>
     </div>
@@ -1006,6 +1087,7 @@ async function renderPainel(){
     document.getElementById('summaryArea').innerHTML = `<div class="summary">
       <div class="stat"><b>${sum.livre}</b><span>Livres</span></div>
       <div class="stat"><b>${sum.vendido}</b><span>Vendidos</span></div>
+      <div class="stat"><b>${sum.convidado}</b><span>Convidados · sem faturamento</span></div>
       <div class="stat"><b>${sum.indisponivel}</b><span>Indisponíveis</span></div>
       <div class="stat"><b>${sum.alunos}</b><span>Alunos · sem ingresso</span></div>
     </div>`;
@@ -1037,7 +1119,7 @@ function renderSelectionToolbar(){
   box.innerHTML = `<div class="sel-toolbar">
     <span>${selectedSeats.size} assento(s) selecionado(s)</span>
     <button class="btn gold tiny" id="btnBulkStatus" type="button" ${selectedSeats.size?'':'disabled'}>Alterar status</button>
-    <button class="btn ghost tiny" id="btnBulkImprimir" type="button" ${selectedSeats.size?'':'disabled'}>🖨️ Imprimir vendidos selecionados</button>
+    <button class="btn ghost tiny" id="btnBulkImprimir" type="button" ${selectedSeats.size?'':'disabled'}>🖨️ Imprimir selecionados (vendidos/convidados)</button>
     <button class="btn ghost tiny" id="btnBulkLimpar" type="button">Limpar seleção</button>
   </div>`;
   const btnStatus = document.getElementById('btnBulkStatus');
@@ -1066,9 +1148,10 @@ function openBulkStatusModal(){
       <label><input type="radio" name="bulkSt" value="vendido"><span>Vendido</span></label>
       <label><input type="radio" name="bulkSt" value="indisponivel"><span>Indisponível</span></label>
       <label><input type="radio" name="bulkSt" value="aluno"><span>Aluno</span></label>
+      <label><input type="radio" name="bulkSt" value="convidado"><span>Convidado</span></label>
     </div>
     <div id="bulkBuyerFields" style="display:none;">
-      <p class="note" style="margin-top:-2px;">Os mesmos dados serão aplicados a todos os ingressos vendidos selecionados.</p>
+      <p class="note" style="margin-top:-2px;">Os mesmos dados serão aplicados a todos os ingressos selecionados.</p>
       <div class="field"><label>Nome do comprador</label><input id="bsNome" placeholder="Ex: Maria Silva"/></div>
       <div class="field"><label>Telefone</label><input id="bsTel" placeholder="(00) 00000-0000"/></div>
       <div class="field"><label>E-mail</label><input id="bsEmail" type="email" placeholder="nome@exemplo.com"/></div>
@@ -1084,13 +1167,15 @@ function openBulkStatusModal(){
   const buyerFields = overlay.querySelector('#bulkBuyerFields');
   const note = overlay.querySelector('#bulkStatusNote');
   overlay.querySelectorAll('input[name="bulkSt"]').forEach(r=>r.addEventListener('change', ()=>{
-    buyerFields.style.display = r.checked && r.value==='vendido' ? 'block' : 'none';
+    buyerFields.style.display = r.checked && (r.value==='vendido' || r.value==='convidado') ? 'block' : 'none';
     const st = overlay.querySelector('input[name="bulkSt"]:checked').value;
     note.textContent = st==='indisponivel'
-      ? 'Indisponível é global: essas cadeiras ficarão indisponíveis em todos os espetáculos e sessões.'
+      ? 'Indisponível é global: essas cadeiras ficarão indisponíveis em todos os espetáculos e sessões (e saem da numeração).'
       : st==='aluno'
-        ? 'Aluno vale para esta sessão e não gera ingresso nem check-in.'
-        : 'Este status será aplicado à sessão selecionada.';
+        ? 'Aluno vale para esta sessão, não gera ingresso nem check-in, e sai da numeração das cadeiras.'
+        : st==='convidado'
+          ? 'Convidado ocupa a cadeira e pode receber ingresso/check-in igual ao Vendido, mas não entra no faturamento.'
+          : 'Este status será aplicado à sessão selecionada.';
   }));
   overlay.querySelector('#bsCancelar').addEventListener('click', ()=>overlay.remove());
   overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
@@ -1102,49 +1187,45 @@ function openBulkStatusModal(){
     const obs = overlay.querySelector('#bsObs')?.value.trim() || '';
     const btn = overlay.querySelector('#bsSalvar');
     btn.disabled = true;
+    const now = Date.now();
+    const by = currentUser ? currentUser.email : '?';
+    // Grava assento por assento (em vez de um único update() multi-caminho na raiz do banco), para
+    // não depender de uma regra de segurança específica pra escrita combinada — e, se algo falhar,
+    // mostra o erro real do Firebase em vez de uma mensagem genérica.
     try{
-      if(status==='indisponivel'){
-        const updates = {};
-        const now = Date.now();
-        ids.forEach(id=>{
-          updates['config/globalUnavailable/'+id] = true;
-          const hKey = db.ref('history/'+currentSessionId+'/'+id).push().key;
-          updates['history/'+currentSessionId+'/'+id+'/'+hKey] = {status:'indisponivel',nome:'',at:now,by:currentUser?currentUser.email:'?'};
-          CONFIG.globalUnavailable = CONFIG.globalUnavailable || {};
-          CONFIG.globalUnavailable[id] = true;
-        });
-        await db.ref().update(updates);
-      } else {
-        // Ao aplicar qualquer outro status, remove eventual indisponibilidade global dessas cadeiras.
-        const globalUpdates = {};
-        ids.forEach(id=>{
-          if(isGlobalUnavailable(id)){
-            globalUpdates['config/globalUnavailable/'+id] = null;
-            delete CONFIG.globalUnavailable[id];
-          }
-        });
-        if(Object.keys(globalUpdates).length) await db.ref().update(globalUpdates);
-        const updates = {};
-        const now = Date.now();
-        ids.forEach(id=>{
-          let data = null;
-          if(status==='vendido') data = {status:'vendido',nome,telefone,email,obs};
-          else if(status==='aluno') data = {status:'aluno',nome:'',telefone:'',email:'',obs:''};
-          else if(status!==defaultStatusFor(id)) data = {status:'livre',nome:'',telefone:'',email:'',obs:''};
-          updates['seats/'+currentSessionId+'/'+id] = data;
-          const hKey = db.ref('history/'+currentSessionId+'/'+id).push().key;
-          updates['history/'+currentSessionId+'/'+id+'/'+hKey] = {status:status,nome:status==='vendido'?nome:'',at:now,by:currentUser?currentUser.email:'?'};
-        });
-        await db.ref().update(updates);
-      }
+      await Promise.all(ids.map(async (id)=>{
+        if(status === 'indisponivel'){
+          await setGlobalUnavailable(id, true);
+          await logHistory(currentSessionId, id, { status:'indisponivel', nome:'', at: now, by });
+          return;
+        }
+        if(isGlobalUnavailable(id)){
+          await setGlobalUnavailable(id, false);
+        }
+        let data = null;
+        if(status==='vendido' || status==='convidado') data = {status,nome,telefone,email,obs};
+        else if(status==='aluno') data = {status:'aluno',nome:'',telefone:'',email:'',obs:''};
+        else if(status!==defaultStatusFor(id)) data = {status:'livre',nome:'',telefone:'',email:'',obs:''};
+        if(data===null){
+          await db.ref('seats/'+currentSessionId+'/'+id).remove();
+          if(SEATS_CACHE[currentSessionId]) delete SEATS_CACHE[currentSessionId][id];
+        } else {
+          await db.ref('seats/'+currentSessionId+'/'+id).set(data);
+          SEATS_CACHE[currentSessionId] = SEATS_CACHE[currentSessionId] || {};
+          SEATS_CACHE[currentSessionId][id] = data;
+        }
+        await logHistory(currentSessionId, id, { status, nome: (status==='vendido'||status==='convidado')?nome:'', at: now, by });
+      }));
       reportCache = {};
       overlay.remove();
       selectedSeats.clear();
       showToast(ids.length + ' assento(s) atualizados');
       renderPainel();
     }catch(e){
+      console.error('Erro ao aplicar status em lote:', e);
       btn.disabled = false;
-      showToast('Erro ao atualizar os assentos');
+      const msg = e && e.message ? e.message : String(e);
+      showToast('Erro ao atualizar os assentos: ' + msg);
     }
   });
 }
@@ -1173,10 +1254,11 @@ async function openWaitlistModal(sessionId){
 
   const itemsBox = overlay.querySelector('#waitlistItems');
   async function refreshWaitlist(){
+    itemsBox.innerHTML = '<div class="empty">Carregando…</div>';
     try{
       const snap = await db.ref('waitlist/'+sessionId).once('value');
       const val = snap.val() || {};
-      const entries = Object.entries(val).sort((a,b)=> a[1].at - b[1].at);
+      const entries = Object.entries(val).sort((a,b)=> (a[1].at||0) - (b[1].at||0));
       if(!entries.length){
         itemsBox.innerHTML = '<div class="empty">Ninguém na lista de espera ainda.</div>';
         return;
@@ -1186,12 +1268,21 @@ async function openWaitlistModal(sessionId){
       ).join('') + '</div>';
       itemsBox.querySelectorAll('[data-remove-wait]').forEach(btn=>{
         btn.addEventListener('click', async ()=>{
-          await db.ref('waitlist/'+sessionId+'/'+btn.dataset.removeWait).remove();
-          refreshWaitlist();
+          btn.disabled = true;
+          try{
+            await db.ref('waitlist/'+sessionId+'/'+btn.dataset.removeWait).remove();
+            refreshWaitlist();
+          }catch(e){
+            console.error('Erro ao remover da lista de espera:', e);
+            btn.disabled = false;
+            showToast('Erro ao remover: ' + (e && e.message ? e.message : e));
+          }
         });
       });
     }catch(e){
-      itemsBox.innerHTML = '<div class="empty">Erro ao carregar a lista de espera.</div>';
+      console.error('Erro ao carregar a lista de espera:', e);
+      const msg = e && e.message ? e.message : String(e);
+      itemsBox.innerHTML = `<div class="empty">Erro ao carregar a lista de espera: ${escapeHtml(msg)}${msg.toLowerCase().includes('permission')?'<br/><br/>Isso costuma acontecer quando as regras de segurança do Firebase Realtime Database não liberam leitura/escrita no nó "waitlist" (talvez ele tenha sido criado depois das regras). Confira as regras no console do Firebase e garanta que o nó "waitlist" tenha as mesmas permissões de "seats"/"history" (leitura e escrita para usuários autenticados).':''}</div>`;
     }
   }
   refreshWaitlist();
@@ -1202,13 +1293,22 @@ async function openWaitlistModal(sessionId){
     const quantidade = Math.max(1, parseInt(overlay.querySelector('#weQtd').value)||1);
     const obs = overlay.querySelector('#weObs').value.trim();
     if(!nome){ showToast('Preencha o nome'); return; }
-    await db.ref('waitlist/'+sessionId).push({ nome, telefone, quantidade, obs, at: Date.now(), by: currentUser?currentUser.email:'?' });
-    overlay.querySelector('#weNome').value = '';
-    overlay.querySelector('#weTel').value = '';
-    overlay.querySelector('#weQtd').value = '1';
-    overlay.querySelector('#weObs').value = '';
-    refreshWaitlist();
-    showToast('Adicionado à lista de espera');
+    const btnAdd = overlay.querySelector('#btnAddWaitlist');
+    btnAdd.disabled = true;
+    try{
+      await db.ref('waitlist/'+sessionId).push({ nome, telefone, quantidade, obs, at: Date.now(), by: currentUser?currentUser.email:'?' });
+      overlay.querySelector('#weNome').value = '';
+      overlay.querySelector('#weTel').value = '';
+      overlay.querySelector('#weQtd').value = '1';
+      overlay.querySelector('#weObs').value = '';
+      refreshWaitlist();
+      showToast('Adicionado à lista de espera');
+    }catch(e){
+      console.error('Erro ao adicionar na lista de espera:', e);
+      showToast('Erro ao adicionar: ' + (e && e.message ? e.message : e));
+    }finally{
+      btnAdd.disabled = false;
+    }
   });
 }
 
@@ -1219,8 +1319,9 @@ async function doSearch(){
   if(!term){ box.innerHTML=''; return; }
   const results = Object.entries(seats).filter(([id,d]) => d.nome && d.nome.toLowerCase().includes(term));
   if(!results.length){ box.innerHTML = '<div class="empty">Nenhum comprador encontrado nesta sessão.</div>'; return; }
+  const numberMap = computeSeatNumberMap(seats).map;
   box.innerHTML = '<div class="found-list">' + results.map(([id,d])=>
-    `<div class="found-item"><span>Assento <b>${id}</b> — ${escapeHtml(d.nome)} ${d.telefone?('· '+escapeHtml(d.telefone)):''}</span><span class="badge ${d.status}">${d.status}</span></div>`
+    `<div class="found-item"><span>Assento <b>${escapeHtml(seatDisplayLabel(id, numberMap))}</b> — ${escapeHtml(d.nome)} ${d.telefone?('· '+escapeHtml(d.telefone)):''}</span><span class="badge ${d.status}">${statusLabel(d.status)}</span></div>`
   ).join('') + '</div>';
 }
 
@@ -1231,15 +1332,18 @@ async function openSeatModal(seatId){
   const show = CONFIG.shows.find(s=>s.id===currentShowId) || {sessions:[]};
   const session = show.sessions.find(se=>se.id===currentSessionId) || {};
   const price = (CONFIG.prices && CONFIG.prices[seatId]!=null) ? CONFIG.prices[seatId] : null;
+  const displayLabel = seatDisplayLabel(seatId);
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
   overlay.innerHTML = `<div class="modal">
-    <h3>Assento ${seatId}</h3>
+    <h3>Assento ${escapeHtml(displayLabel)}</h3>
+    <p class="note" style="margin:-8px 0 6px;">Código interno: ${escapeHtml(seatId)}</p>
     <div class="sub">${escapeHtml(show.name||'')} — ${escapeHtml(sessionLabel(session))}</div>
     <div class="price-tag">${price!=null ? '💰 Valor deste assento: R$ '+price.toFixed(2).replace('.',',') : '⚠️ Preço não definido para o assento '+seatId+' (defina em Configurações)'}</div>
     <div class="status-choices">
       <label><input type="radio" name="st" value="livre" ${data.status==='livre'?'checked':''}><span>Livre</span></label>
       <label><input type="radio" name="st" value="vendido" ${data.status==='vendido'?'checked':''}><span>Vendido</span></label>
+      <label><input type="radio" name="st" value="convidado" ${data.status==='convidado'?'checked':''}><span>Convidado</span></label>
       <label><input type="radio" name="st" value="indisponivel" ${data.status==='indisponivel'?'checked':''}><span>Indisponível</span></label>
       <label><input type="radio" name="st" value="aluno" ${data.status==='aluno'?'checked':''}><span>Aluno</span></label>
     </div>
@@ -1249,7 +1353,7 @@ async function openSeatModal(seatId){
     <div class="field"><label>Observação</label><textarea id="fObs" rows="2" placeholder="Combinado, forma de pagamento, etc.">${escapeHtml(data.obs)}</textarea></div>
     <button class="btn ghost tiny" id="btnHistorico" type="button" style="margin-bottom:12px;">📜 Ver histórico deste assento</button>
     <div id="historicoBox" style="display:none; margin-bottom:12px;"></div>
-    ${data.status==='vendido' ? `<div class="ticket-actions">
+    ${(data.status==='vendido'||data.status==='convidado') ? `<div class="ticket-actions">
       <button class="btn ghost tiny" id="btnImprimir" type="button">🖨️ Imprimir ingresso</button>
       <button class="btn ghost tiny" id="btnEnviarEmail" type="button" ${data.email?'':'disabled title="Preencha e salve o e-mail primeiro"'}>✉️ Enviar por e-mail</button>
     </div>
@@ -1297,7 +1401,7 @@ async function openSeatModal(seatId){
   const btnEnviar = overlay.querySelector('#btnEnviarEmail');
   if(btnEnviar){
     btnEnviar.addEventListener('click', async ()=>{
-      await sendTicketEmail({ seatId, show, session, nome: data.nome, email: data.email });
+      await sendTicketEmail({ seatId, show, session, nome: data.nome, email: data.email, status: data.status });
     });
   }
   const btnCheckin = overlay.querySelector('#btnToggleCheckin');
@@ -1348,6 +1452,7 @@ function findShowAndSession(sessionId){
 }
 function buildTicketHtml({seatId, show, session, nome, status}){
   const code = ticketCode(session.id, seatId);
+  const displayLabel = seatDisplayLabel(seatId);
   const qr = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent('STUDIOA|'+code);
   const lname = (show.name||'').toLowerCase();
   const theme = lname.includes('frozen') ? 'theme-frozen' : lname.includes('wicked') ? 'theme-wicked' : (lname.includes('show') || lname.includes('rei')) ? 'theme-showman' : '';
@@ -1369,14 +1474,14 @@ function buildTicketHtml({seatId, show, session, nome, status}){
           <div class="ticket-info"><small>Data</small><strong>${dateText}</strong></div>
           <div class="ticket-info"><small>Horário</small><strong>${escapeHtml(timeText)}</strong></div>
           <div class="ticket-info"><small>Sessão</small><strong>${escapeHtml(sessionLabel(session))}</strong></div>
-          <div class="ticket-info seat"><small>Assento</small><strong>${escapeHtml(seatId)}</strong></div>
+          <div class="ticket-info seat"><small>Assento</small><strong>${escapeHtml(displayLabel)}</strong></div>
         </div>
         <p class="ticket-person">Ingresso de <b>${escapeHtml(nome||'Visitante')}</b></p>
         <div class="ticket-bottom">
           <img class="ticket-qr" src="${qr}" alt="QR Code do ingresso"/>
           <div>
             <p class="ticket-code">${escapeHtml(code.toUpperCase())}</p>
-            <span class="ticket-status">PAGO</span>
+            <span class="ticket-status">${status==='convidado' ? 'CORTESIA' : 'PAGO'}</span>
             <p class="ticket-rules">Apresente este QR Code na entrada. O ingresso é válido para uma única entrada e para a sessão indicada. Chegue com antecedência e mantenha o código legível.</p>
           </div>
         </div>
@@ -1404,8 +1509,8 @@ async function printTicket(info){
 }
 async function printAllTickets(sessionId){
   const seats = SEATS_CACHE[sessionId] || {};
-  const entries = Object.entries(seats).filter(([id,d]) => d.status==='vendido');
-  if(!entries.length){ showToast('Nenhum ingresso vendido nesta sessão ainda'); return; }
+  const entries = Object.entries(seats).filter(([id,d]) => d.status==='vendido' || d.status==='convidado');
+  if(!entries.length){ showToast('Nenhum ingresso vendido ou convidado nesta sessão ainda'); return; }
   entries.sort((a,b)=> a[0].localeCompare(b[0]));
   const found = findShowAndSession(sessionId);
   if(!found){ showToast('Sessão não encontrada'); return; }
@@ -1418,9 +1523,9 @@ async function printAllTickets(sessionId){
 }
 async function printSelectedTickets(sessionId, ids){
   const seats = SEATS_CACHE[sessionId] || {};
-  const entries = ids.map(id=>[id, seats[id]]).filter(([id,d]) => d && d.status==='vendido');
+  const entries = ids.map(id=>[id, seats[id]]).filter(([id,d]) => d && (d.status==='vendido' || d.status==='convidado'));
   const skipped = ids.length - entries.length;
-  if(!entries.length){ showToast('Nenhum dos assentos selecionados está marcado como vendido'); return; }
+  if(!entries.length){ showToast('Nenhum dos assentos selecionados está marcado como vendido ou convidado'); return; }
   entries.sort((a,b)=> a[0].localeCompare(b[0]));
   const found = findShowAndSession(sessionId);
   if(!found){ showToast('Sessão não encontrada'); return; }
@@ -1432,6 +1537,63 @@ async function printSelectedTickets(sessionId, ids){
   window.print();
   if(skipped>0) showToast(skipped + ' assento(s) ignorado(s) por não estarem vendidos');
 }
+/* ---------- Ingresso em PDF (gerado no navegador, sem servidor) ---------- */
+async function buildTicketPdfDataUrl({seatId, show, session, nome, status}){
+  const code = ticketCode(session.id, seatId);
+  const displayLabel = seatDisplayLabel(seatId);
+  let qrDataUrl = null;
+  try{
+    qrDataUrl = await QRCode.toDataURL('STUDIOA|'+code, { margin:1, width:260, color:{ dark:'#210a15', light:'#ffffff' } });
+  }catch(e){ /* segue sem QR se algo falhar */ }
+
+  const { jsPDF } = window.jspdf;
+  const pageW = 150, pageH = 80;
+  const doc = new jsPDF({ orientation:'landscape', unit:'mm', format:[pageW,pageH] });
+
+  doc.setFillColor(12,10,13); doc.rect(0,0,pageW,pageH,'F');
+  doc.setFillColor(228,19,111); doc.rect(0,0,pageW,14,'F');
+
+  try{
+    const logoSrc = document.querySelector('.brand img').src;
+    doc.addImage(logoSrc, 'PNG', 5, 2, 10, 10);
+  }catch(e){ /* segue sem logo se algo falhar */ }
+
+  doc.setTextColor(255,255,255);
+  doc.setFont('helvetica','bold'); doc.setFontSize(12);
+  doc.text('Studio A · Bilheteria', 19, 9);
+
+  doc.setFont('helvetica','bold'); doc.setFontSize(15);
+  doc.setTextColor(246,238,242);
+  doc.text(show.name || 'Espetáculo', 6, 25, {maxWidth: pageW-46});
+
+  const dateText = session.date ? new Date(session.date+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'}) : 'Data a confirmar';
+  doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
+  doc.setTextColor(200,190,196);
+  doc.text('Data: '+dateText, 6, 33);
+  doc.text('Horário: '+(session.time || '--:--'), 6, 39);
+  doc.text('Sessão: '+sessionLabel(session), 6, 45, {maxWidth: pageW-46});
+
+  doc.setFont('helvetica','bold'); doc.setFontSize(12);
+  doc.setTextColor(255,255,255);
+  doc.text('Assento: '+displayLabel, 6, 54);
+  doc.setFont('helvetica','normal'); doc.setFontSize(10);
+  doc.text('Ingresso de: '+(nome || 'Visitante'), 6, 61, {maxWidth: pageW-46});
+
+  doc.setFont('helvetica','bold'); doc.setFontSize(9);
+  doc.setTextColor(228,19,111);
+  doc.text(status==='convidado' ? 'CORTESIA' : 'PAGO', 6, 70);
+
+  if(qrDataUrl){
+    doc.addImage(qrDataUrl, 'PNG', pageW-38, 16, 32, 32);
+  }
+  doc.setFont('helvetica','normal'); doc.setFontSize(7);
+  doc.setTextColor(200,190,196);
+  doc.text(code.toUpperCase(), pageW-38, 51, {maxWidth:32});
+  doc.setFontSize(6.5);
+  doc.text('Apresente este QR Code na entrada. Ingresso válido para uma única entrada, na sessão indicada.', 6, 76, {maxWidth: pageW-12});
+
+  return doc.output('datauristring');
+}
 async function sendTicketEmail(info){
   if(!EMAILJS_READY){
     showToast('Configure o EmailJS primeiro (veja instruções no arquivo)');
@@ -1439,19 +1601,26 @@ async function sendTicketEmail(info){
   }
   if(!info.email){ showToast('Este comprador não tem e-mail salvo'); return; }
   const code = ticketCode(currentSessionId, info.seatId);
+  const displayLabel = seatDisplayLabel(info.seatId);
   try{
+    showToast('Gerando o PDF do ingresso…');
+    const pdfDataUrl = await buildTicketPdfDataUrl(info);
     await emailjs.send(emailjsConfig.serviceId, emailjsConfig.templateId, {
       to_email: info.email,
       to_name: info.nome || '',
       show_name: info.show.name || '',
       session_label: sessionLabel(info.session),
-      seat_id: info.seatId,
+      seat_id: displayLabel,
       ticket_code: code,
-      status_label: 'Pago'
+      status_label: info.status==='convidado' ? 'Cortesia' : 'Pago',
+      pdf_ticket: pdfDataUrl,
+      pdf_filename: 'ingresso-' + code.toLowerCase() + '.pdf'
     });
-    showToast('E-mail enviado para ' + info.email);
+    showToast('E-mail com o ingresso em PDF enviado para ' + info.email);
   }catch(e){
-    showToast('Erro ao enviar e-mail — confira a configuração do EmailJS');
+    console.error(e);
+    const msg = e && (e.text || e.message) ? (e.text || e.message) : 'confira a configuração do EmailJS';
+    showToast('Erro ao enviar e-mail: ' + msg);
   }
 }
 
@@ -1515,10 +1684,23 @@ function renderConfig(){
   <div class="panel">
     <h2>Configurações da sala</h2>
     <p class="note" style="margin-top:-8px;">O palco fica de frente para o público. Da esquerda para a direita: <b>Esquerda</b> · <b>Centro</b> · <b>Direita (reservado para alunos por padrão — dá pra liberar assento por assento no Painel)</b>.</p>
+    <p class="note" style="margin-top:-4px;">Edite os números de cada fileira abaixo para adicionar ou remover cadeiras — a numeração das cadeiras (usada nos ingressos e e-mails) é recalculada automaticamente, sequencial de A a Z, sem reiniciar em cada fileira. Cadeiras marcadas como "Indisponível" ou como "Aluno" saem dessa numeração (o total cai) até serem liberadas de novo.</p>
     <div class="room-layout-editor" style="margin-top:12px;overflow:auto;">
-      <table class="data-table"><thead><tr><th>Fileira</th><th>Esquerda</th><th>Centro</th><th>Direita / Alunos</th><th>Total</th></tr></thead><tbody>${ROOM_LAYOUT.map(x=>`<tr><td><strong>${x.row}</strong></td><td>${x.left}</td><td>${x.center}</td><td>${x.right}</td><td>${x.left+x.center+x.right}</td></tr>`).join('')}</tbody></table>
+      <table class="data-table" id="roomLayoutTable"><thead><tr><th>Fileira</th><th>Esquerda</th><th>Centro</th><th>Direita / Alunos</th><th>Total</th><th></th></tr></thead>
+      <tbody>${ROOM_LAYOUT.map((x,r)=>`<tr data-row-idx="${r}">
+        <td><strong>${x.row}</strong></td>
+        <td><input type="number" min="0" class="rl-input rl-left" value="${x.left}" style="width:64px;"/></td>
+        <td><input type="number" min="0" class="rl-input rl-center" value="${x.center}" style="width:64px;"/></td>
+        <td><input type="number" min="0" class="rl-input rl-right" value="${x.right}" style="width:64px;"/></td>
+        <td class="rl-total">${x.left+x.center+x.right}</td>
+        <td><button class="btn danger tiny" data-remove-row="${r}" type="button">Remover</button></td>
+      </tr>`).join('')}</tbody></table>
     </div>
-    <p class="note">Layout fixo: 12 fileiras (A–L), 15 lugares no centro. As laterais formam a escada; a direita é reservada para alunos por padrão.</p>
+    <div class="row" style="margin-top:12px;">
+      <button class="btn ghost tiny" id="btnAddRoomRow" type="button">+ Fileira</button>
+      <span class="note" id="roomLayoutTotal" style="margin:0;"></span>
+    </div>
+    <p class="note" style="margin-top:10px;">Atenção: remover uma fileira inteira pode deixar "órfãs" vendas antigas feitas nela (a cadeira some do mapa, mas o histórico permanece salvo). Reduzir a quantidade de cadeiras de uma fileira que já tem vendas também pode remover cadeiras já vendidas do mapa — confira o Painel depois de editar.</p>
   </div>
 
   <div class="panel">
@@ -1541,6 +1723,7 @@ function renderConfig(){
   content.innerHTML = html;
   attachPriceMapHandlers();
   updatePriceSelCount();
+  attachRoomLayoutHandlers();
 
   document.getElementById('btnApplyPrice').addEventListener('click', async ()=>{
     const v = parseFloat(document.getElementById('bulkPriceInput').value.replace(',','.'));
@@ -1633,6 +1816,71 @@ function renderConfig(){
     CONFIG.shows.push({ id: uid('show'), name: 'Novo espetáculo', sessions: [{id: uid('s'), date:'', time:''}] });
     await saveConfig(); renderConfig();
   });
+}
+
+function updateRoomLayoutTotalDisplay(){
+  const el = document.getElementById('roomLayoutTotal');
+  if(!el) return;
+  const total = totalPhysicalSeats();
+  const unavailable = totalUnavailableSeats();
+  // Numeração ativa: usa {} pra cair no status padrão de cada cadeira (ou seja, considera as cadeiras
+  // da direita como "Aluno" por padrão) — é uma estimativa, já que o status real de "Aluno" pode
+  // variar sessão a sessão (uma cadeira de aluno pode ser liberada pra venda numa sessão específica).
+  const activeNumbering = computeSeatNumberMap({}).total;
+  el.textContent = `Cadeiras cadastradas: ${total} · Indisponíveis agora: ${unavailable} · Numeração ativa (fora alunos e indisponíveis): ${activeNumbering} cadeiras`;
+}
+let roomLayoutSaveTimer = null;
+function scheduleRoomLayoutSave(){
+  clearTimeout(roomLayoutSaveTimer);
+  roomLayoutSaveTimer = setTimeout(async ()=>{
+    try{ await saveRoomLayout(); }
+    catch(e){ console.error(e); showToast('Erro ao salvar o layout da sala: ' + (e && e.message ? e.message : e)); }
+  }, 500);
+}
+function attachRoomLayoutHandlers(){
+  const table = document.getElementById('roomLayoutTable');
+  if(!table) return;
+  updateRoomLayoutTotalDisplay();
+  table.querySelectorAll('tr[data-row-idx]').forEach(tr=>{
+    const r = parseInt(tr.dataset.rowIdx, 10);
+    const updateRowTotal = ()=>{
+      const layout = ROOM_LAYOUT[r];
+      tr.querySelector('.rl-total').textContent = layout.left + layout.center + layout.right;
+      updateRoomLayoutTotalDisplay();
+    };
+    tr.querySelector('.rl-left').addEventListener('change', e=>{
+      ROOM_LAYOUT[r].left = Math.max(0, parseInt(e.target.value,10) || 0);
+      updateRowTotal(); scheduleRoomLayoutSave();
+    });
+    tr.querySelector('.rl-center').addEventListener('change', e=>{
+      ROOM_LAYOUT[r].center = Math.max(0, parseInt(e.target.value,10) || 0);
+      updateRowTotal(); scheduleRoomLayoutSave();
+    });
+    tr.querySelector('.rl-right').addEventListener('change', e=>{
+      ROOM_LAYOUT[r].right = Math.max(0, parseInt(e.target.value,10) || 0);
+      updateRowTotal(); scheduleRoomLayoutSave();
+    });
+    const removeBtn = tr.querySelector('[data-remove-row]');
+    if(removeBtn){
+      removeBtn.addEventListener('click', async ()=>{
+        if(ROOM_LAYOUT.length<=1){ showToast('Precisa ter pelo menos uma fileira'); return; }
+        if(!confirm('Remover a fileira '+ROOM_LAYOUT[r].row+'? Cadeiras já vendidas nela somem do mapa (o histórico continua salvo).')) return;
+        ROOM_LAYOUT.splice(r,1);
+        await saveRoomLayout();
+        renderConfig();
+      });
+    }
+  });
+  const btnAdd = document.getElementById('btnAddRoomRow');
+  if(btnAdd){
+    btnAdd.addEventListener('click', async ()=>{
+      if(ROOM_LAYOUT.length>=26){ showToast('Máximo de 26 fileiras (A a Z)'); return; }
+      const last = ROOM_LAYOUT[ROOM_LAYOUT.length-1] || {left:7, center:15, right:8};
+      ROOM_LAYOUT.push({ row: rowLetter(ROOM_LAYOUT.length), left:last.left, center:last.center, right:last.right });
+      await saveRoomLayout();
+      renderConfig();
+    });
+  }
 }
 
 /* ---------- Check-in (leitura de QR) ---------- */
@@ -1750,10 +1998,10 @@ async function handleScannedText(text){
     seat = snap.val();
   }catch(e){ seat = null; }
 
-  if(!seat || seat.status!=='vendido'){
+  if(!seat || (seat.status!=='vendido' && seat.status!=='convidado')){
     const msg = seat && seat.status==='aluno'
       ? `🎓 Assento ${seatId} é reservado para aluno e não possui ingresso/check-in.`
-      : `❌ Assento ${seatId} não consta como vendido`;
+      : `❌ Assento ${seatId} não consta como vendido ou convidado`;
     resultBox.innerHTML = `<div class="scan-banner invalid">${msg}</div>`;
     addCheckinLog(seatId, found, null, 'invalido');
     return;
