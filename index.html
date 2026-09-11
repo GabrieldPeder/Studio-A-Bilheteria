@@ -762,6 +762,15 @@ function seatDisplayLabel(seatId, numberMap){
   const n = map[seatId];
   return n!=null ? (seatRowLetter(seatId) + n) : seatId;
 }
+// Acha todos os assentos (vendido/convidado) desta sessão com o mesmo e-mail — usado pra mandar
+// um único e-mail com todos os ingressos do mesmo comprador, em vez de um e-mail por assento.
+function findEmailGroup(seats, email){
+  const norm = (email||'').trim().toLowerCase();
+  if(!norm) return [];
+  return Object.entries(seats)
+    .filter(([id,d]) => d && (d.status==='vendido'||d.status==='convidado') && (d.email||'').trim().toLowerCase()===norm)
+    .sort((a,b)=> a[0].localeCompare(b[0]));
+}
 function roomRow(r){ return ROOM_LAYOUT[r] || {row:rowLetter(r), left:7, center:15, right:8}; }
 function rowWidth(r){ const x=roomRow(r); return x.left+x.center+x.right; }
 function blockOf(n, r){ const x=roomRow(r); if(n<=x.left) return 'left'; if(n<=x.left+x.center) return 'center'; return 'right'; }
@@ -1030,9 +1039,11 @@ async function renderPainel(){
     ${showSessionSelector()}
     <div class="row" style="margin-top:8px;">
       <button class="btn ghost tiny" id="btnImprimirLote" type="button">🖨️ Imprimir ingressos vendidos/convidados desta sessão</button>
+      <button class="btn ghost tiny" id="btnEnviarLote" type="button">📧 Enviar e-mails pendentes desta sessão</button>
       <button class="btn ghost tiny" id="btnListaEspera" type="button">📋 Lista de espera</button>
       <button class="btn ${selectionMode?'gold':'ghost'} tiny" id="btnToggleSelection" type="button">☑️ ${selectionMode ? 'Sair da seleção múltipla' : 'Selecionar vários assentos'}</button>
     </div>
+    <div id="sendLoteProgress"></div>
     <div id="selectionToolbar"></div>
     <div id="sessionOverviewArea"></div>
     <div class="search-box" style="margin-top:14px;">
@@ -1054,6 +1065,10 @@ async function renderPainel(){
   document.getElementById('btnImprimirLote').addEventListener('click', ()=>{
     if(!currentSessionId){ showToast('Selecione uma sessão primeiro'); return; }
     printAllTickets(currentSessionId);
+  });
+  document.getElementById('btnEnviarLote').addEventListener('click', ()=>{
+    if(!currentSessionId){ showToast('Selecione uma sessão primeiro'); return; }
+    sendPendingEmailsForSession(currentSessionId);
   });
   document.getElementById('btnListaEspera').addEventListener('click', ()=>{
     if(!currentSessionId){ showToast('Selecione uma sessão primeiro'); return; }
@@ -1333,6 +1348,11 @@ async function openSeatModal(seatId){
   const session = show.sessions.find(se=>se.id===currentSessionId) || {};
   const price = (CONFIG.prices && CONFIG.prices[seatId]!=null) ? CONFIG.prices[seatId] : null;
   const displayLabel = seatDisplayLabel(seatId);
+  const group = data.email ? findEmailGroup(seats, data.email) : [];
+  const groupAlreadySent = group.length>0 && group.every(([,d])=>d.emailSent);
+  const emailBtnLabel = groupAlreadySent
+    ? (group.length>1 ? `🔁 Reenviar e-mail (${group.length} ingressos)` : '🔁 Reenviar e-mail')
+    : (group.length>1 ? `✉️ Enviar e-mail (${group.length} ingressos deste comprador)` : '✉️ Enviar por e-mail');
   const overlay = document.createElement('div');
   overlay.className = 'overlay';
   overlay.innerHTML = `<div class="modal">
@@ -1355,8 +1375,10 @@ async function openSeatModal(seatId){
     <div id="historicoBox" style="display:none; margin-bottom:12px;"></div>
     ${(data.status==='vendido'||data.status==='convidado') ? `<div class="ticket-actions">
       <button class="btn ghost tiny" id="btnImprimir" type="button">🖨️ Imprimir ingresso</button>
-      <button class="btn ghost tiny" id="btnEnviarEmail" type="button" ${data.email?'':'disabled title="Preencha e salve o e-mail primeiro"'}>✉️ Enviar por e-mail</button>
+      <button class="btn ghost tiny" id="btnEnviarEmail" type="button" ${data.email?'':'disabled title="Preencha e salve o e-mail primeiro"'}>${emailBtnLabel}</button>
     </div>
+    ${group.length>1 ? `<p class="note" style="margin-top:-6px;">Este comprador também tem os assentos ${escapeHtml(group.filter(([id])=>id!==seatId).map(([id])=>seatDisplayLabel(id)).join(', '))} nesta sessão — o botão acima manda tudo junto, num único e-mail.</p>` : ''}
+    ${groupAlreadySent ? `<p class="note" style="margin-top:-6px;">✅ E-mail já foi enviado para este comprador nesta sessão.</p>` : ''}
     <div class="checkin-box ${data.checkin?'in':''}">
       ${data.checkin ? `✅ Entrada confirmada às ${new Date(data.checkinAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}` : '⏳ Ainda não deu entrada na sala'}
       <button class="btn ghost tiny" id="btnToggleCheckin" type="button">${data.checkin ? 'Desfazer entrada' : 'Marcar entrada manualmente'}</button>
@@ -1401,7 +1423,9 @@ async function openSeatModal(seatId){
   const btnEnviar = overlay.querySelector('#btnEnviarEmail');
   if(btnEnviar){
     btnEnviar.addEventListener('click', async ()=>{
-      await sendTicketEmail({ seatId, show, session, nome: data.nome, email: data.email, status: data.status });
+      btnEnviar.disabled = true;
+      const ok = await sendTicketEmail({ seatId, show, session, nome: data.nome, email: data.email, status: data.status });
+      if(ok) overlay.remove(); else btnEnviar.disabled = false;
     });
   }
   const btnCheckin = overlay.querySelector('#btnToggleCheckin');
@@ -1506,6 +1530,50 @@ async function printTicket(info){
   holder.innerHTML = buildTicketHtml(info);
   await waitForImages(holder);
   window.print();
+}
+// Envia (em sequência, com uma pequena pausa entre cada um) um e-mail por COMPRADOR — não por assento —
+// pra quem ainda não recebeu o ingresso desta sessão. Assentos do mesmo comprador (mesmo e-mail) vão
+// juntos no mesmo envio (ver sendTicketEmail/findEmailGroup), o que já reduz bastante a quantidade de
+// e-mails; isso também poupa a cota mensal do plano gratuito do EmailJS (200 envios/mês).
+async function sendPendingEmailsForSession(sessionId){
+  const found = findShowAndSession(sessionId);
+  if(!found){ showToast('Sessão não encontrada'); return; }
+  const { show, session } = found;
+  const seats = SEATS_CACHE[sessionId] || {};
+  const pending = Object.entries(seats).filter(([id,d]) =>
+    d && (d.status==='vendido' || d.status==='convidado') && d.email && d.email.trim() && !d.emailSent
+  );
+  if(!pending.length){ showToast('Nenhum e-mail pendente nesta sessão — todo mundo com e-mail salvo já recebeu.'); return; }
+
+  // Agrupa por e-mail (normalizado) só pra saber quantos ENVIOS vão ser feitos (não quantos assentos).
+  const byEmail = {};
+  pending.forEach(([id,d])=>{
+    const key = d.email.trim().toLowerCase();
+    (byEmail[key] = byEmail[key] || []).push([id,d]);
+  });
+  const emails = Object.keys(byEmail);
+
+  if(!confirm(`Isso vai mandar ${emails.length} e-mail(s) (cobrindo ${pending.length} assento(s) pendente(s)) — um e-mail por comprador, agrupando os assentos dele. Continuar?`)) return;
+
+  const btn = document.getElementById('btnEnviarLote');
+  const progressBox = document.getElementById('sendLoteProgress');
+  if(btn) btn.disabled = true;
+  let ok = 0, fail = 0;
+  for(let i=0; i<emails.length; i++){
+    const email = emails[i];
+    const [firstId, firstData] = byEmail[email][0];
+    if(progressBox) progressBox.innerHTML = `<p class="note">Enviando ${i+1} de ${emails.length}…</p>`;
+    const sent = await sendTicketEmail({
+      seatId: firstId, show, session, nome: firstData.nome, email: firstData.email, status: firstData.status
+    });
+    if(sent) ok++; else fail++;
+    // pequena pausa entre envios, gentil com o rate-limit do EmailJS
+    await new Promise(r=>setTimeout(r, 400));
+  }
+  if(btn) btn.disabled = false;
+  if(progressBox) progressBox.innerHTML = '';
+  showToast(`Envio em lote concluído: ${ok} enviado(s)${fail?`, ${fail} com erro`:''}.`);
+  renderPainel();
 }
 async function printAllTickets(sessionId){
   const seats = SEATS_CACHE[sessionId] || {};
@@ -1654,33 +1722,53 @@ async function buildTicketPdfDataUrl({seatId, show, session, nome, status}){
 async function sendTicketEmail(info){
   if(!EMAILJS_READY){
     showToast('Configure o EmailJS primeiro (veja instruções no arquivo)');
-    return;
+    return false;
   }
-  if(!info.email){ showToast('Este comprador não tem e-mail salvo'); return; }
-  const code = ticketCode(currentSessionId, info.seatId);
-  const displayLabel = seatDisplayLabel(info.seatId);
+  if(!info.email){ showToast('Este comprador não tem e-mail salvo'); return false; }
+  const sid = info.session.id;
+  const seats = SEATS_CACHE[sid] || {};
+  const group = findEmailGroup(seats, info.email);
+  // Se por algum motivo o assento atual não aparecer no grupo (ex: ainda não foi salvo), manda ele sozinho.
+  const list = group.length ? group : [[info.seatId, seats[info.seatId] || {status: info.status, nome: info.nome, email: info.email, telefone:'', obs:''}]];
   try{
+    const ticketBlocks = list.map(([id,d]) => buildTicketEmailHtml({
+      seatId: id, show: info.show, session: info.session, nome: d.nome || info.nome, status: d.status
+    }));
+    const seatLabels = list.map(([id]) => seatDisplayLabel(id));
+    const allConvidado = list.every(([,d])=>d.status==='convidado');
     const params = {
       to_email: info.email,
       to_name: info.nome || '',
       show_name: info.show.name || '',
       session_label: sessionLabel(info.session),
-      seat_id: displayLabel,
-      ticket_code: code,
-      status_label: info.status==='convidado' ? 'Cortesia' : 'Pago',
-      ticket_html: buildTicketEmailHtml(info)
+      seat_id: seatLabels.join(', '),
+      ticket_code: list.length===1 ? ticketCode(sid, list[0][0]) : `${list.length} ingressos`,
+      status_label: allConvidado ? 'Cortesia' : 'Pago',
+      ticket_html: ticketBlocks.join('<div style="height:14px;line-height:14px;font-size:1px;">&nbsp;</div>')
     };
     if(EMAILJS_PDF_ATTACHMENT_ENABLED){
       showToast('Gerando o PDF do ingresso…');
       params.pdf_ticket = await buildTicketPdfDataUrl(info);
-      params.pdf_filename = 'ingresso-' + code.toLowerCase() + '.pdf';
+      params.pdf_filename = 'ingresso-' + ticketCode(sid, info.seatId).toLowerCase() + '.pdf';
     }
     await emailjs.send(emailjsConfig.serviceId, emailjsConfig.templateId, params);
-    showToast('E-mail com o ingresso enviado para ' + info.email);
+    // Marca cada assento enviado, pra não reenviar por engano depois.
+    const now = Date.now();
+    await Promise.all(list.map(([id,d]) => {
+      const updated = Object.assign({}, d, {emailSent:true, emailSentAt:now});
+      SEATS_CACHE[sid] = SEATS_CACHE[sid] || {};
+      SEATS_CACHE[sid][id] = updated;
+      return db.ref('seats/'+sid+'/'+id).set(updated);
+    }));
+    showToast(list.length>1
+      ? `E-mail com ${list.length} ingressos enviado para ${info.email}`
+      : `E-mail com o ingresso enviado para ${info.email}`);
+    return true;
   }catch(e){
     console.error(e);
     const msg = e && (e.text || e.message) ? (e.text || e.message) : 'confira a configuração do EmailJS';
     showToast('Erro ao enviar e-mail: ' + msg);
+    return false;
   }
 }
 
