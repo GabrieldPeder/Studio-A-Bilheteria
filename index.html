@@ -1537,7 +1537,64 @@ async function printSelectedTickets(sessionId, ids){
   window.print();
   if(skipped>0) showToast(skipped + ' assento(s) ignorado(s) por não estarem vendidos');
 }
-/* ---------- Ingresso em PDF (gerado no navegador, sem servidor) ---------- */
+/* ---------- Ingresso "estilo do site" dentro do corpo do e-mail (sem anexo, sem custo) ---------- */
+// E-mails não suportam bem CSS moderno (flexbox, variáveis CSS, imagens em base64 etc.), então aqui a
+// gente recria o visual do ingresso com tabelas e estilo "inline", usando só a imagem do QR Code
+// hospedada (api.qrserver.com) — nada de anexo, nada de plano pago do EmailJS.
+function ticketThemeColors(showName){
+  const lname = (showName||'').toLowerCase();
+  if(lname.includes('frozen')) return {accent:'#477ea6', soft:'#87b6d8', deep:'#183b59'};
+  if(lname.includes('wicked')) return {accent:'#3b8a5b', soft:'#84bd79', deep:'#173f29'};
+  if(lname.includes('show') || lname.includes('rei')) return {accent:'#9d3137', soft:'#d6a85e', deep:'#4f171c'};
+  return {accent:'#e4136f', soft:'#f26fa8', deep:'#6d0936'};
+}
+function buildTicketEmailHtml({seatId, show, session, nome, status}){
+  const code = ticketCode(session.id, seatId);
+  const displayLabel = seatDisplayLabel(seatId);
+  const qr = 'https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=' + encodeURIComponent('STUDIOA|'+code);
+  const {accent, soft, deep} = ticketThemeColors(show.name);
+  const dateText = session.date ? new Date(session.date+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'}) : 'Data a confirmar';
+  const timeText = session.time || '--:--';
+  const statusTag = status==='convidado' ? 'CORTESIA' : 'PAGO';
+  return `
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:480px;margin:0 auto;background-color:#17141a;border-radius:14px;border:1px solid #2c2530;">
+  <tr><td style="background-color:${deep};background-image:linear-gradient(135deg,${deep},${accent});padding:20px 22px 16px;border-radius:14px 14px 0 0;">
+    <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;letter-spacing:1px;color:#ffffff;text-transform:uppercase;opacity:.85;">Studio A &middot; Bilheteria</div>
+    <div style="font-family:Georgia,'Times New Roman',serif;font-size:23px;font-weight:bold;color:#ffffff;margin-top:6px;">${escapeHtml(show.name||'Espetáculo')}</div>
+  </td></tr>
+  <tr><td style="padding:20px 22px;">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="font-family:Arial,Helvetica,sans-serif;font-size:10px;letter-spacing:.6px;color:#a79aa5;text-transform:uppercase;padding-bottom:4px;" width="50%">Data</td>
+        <td style="font-family:Arial,Helvetica,sans-serif;font-size:10px;letter-spacing:.6px;color:#a79aa5;text-transform:uppercase;padding-bottom:4px;" width="50%">Sess&atilde;o</td>
+      </tr>
+      <tr>
+        <td style="font-family:Georgia,'Times New Roman',serif;font-size:15px;font-weight:bold;color:#f5eef1;padding-bottom:16px;">${dateText} &middot; ${escapeHtml(timeText)}</td>
+        <td style="font-family:Georgia,'Times New Roman',serif;font-size:15px;font-weight:bold;color:#f5eef1;padding-bottom:16px;">${escapeHtml(sessionLabel(session))}</td>
+      </tr>
+    </table>
+    <div style="font-family:Arial,Helvetica,sans-serif;font-size:10px;letter-spacing:.6px;color:#a79aa5;text-transform:uppercase;">Assento</div>
+    <div style="font-family:Georgia,'Times New Roman',serif;font-size:30px;font-weight:bold;color:${accent};margin:2px 0 14px;">${escapeHtml(displayLabel)}</div>
+    <div style="font-family:Arial,Helvetica,sans-serif;font-size:13px;color:#f5eef1;margin-bottom:18px;">Ingresso de <b>${escapeHtml(nome||'Visitante')}</b></div>
+    <table role="presentation" cellpadding="0" cellspacing="0">
+      <tr>
+        <td style="width:118px;vertical-align:top;">
+          <img src="${qr}" width="108" height="108" alt="QR Code do ingresso" style="display:block;border-radius:8px;border:2px solid ${accent};"/>
+        </td>
+        <td style="vertical-align:top;padding-left:16px;">
+          <div style="font-family:'Courier New',Courier,monospace;font-size:12px;letter-spacing:.5px;color:#f5eef1;margin-bottom:8px;">${escapeHtml(code.toUpperCase())}</div>
+          <span style="display:inline-block;background-color:${accent};color:#ffffff;font-family:Arial,Helvetica,sans-serif;font-size:11px;font-weight:bold;letter-spacing:.5px;padding:4px 11px;border-radius:20px;">${statusTag}</span>
+          <div style="font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#a79aa5;margin-top:10px;line-height:1.5;">Apresente este e-mail ou o QR Code acima na entrada. V&aacute;lido para uma &uacute;nica entrada, na sess&atilde;o indicada.</div>
+        </td>
+      </tr>
+    </table>
+  </td></tr>
+  <tr><td style="height:6px;background-color:${accent};background-image:linear-gradient(90deg,${deep},${accent},${soft});border-radius:0 0 14px 14px;"></td></tr>
+</table>`;
+}
+/* ---------- Ingresso em PDF (gerado no navegador, sem servidor) — hoje só funciona se o plano do
+   EmailJS tiver suporte a anexo (Personal ou superior). No plano Free, o e-mail usa o HTML acima. ---------- */
+const EMAILJS_PDF_ATTACHMENT_ENABLED = false; // mude pra true se fizer upgrade do plano no EmailJS e configurar o Attachment
 async function buildTicketPdfDataUrl({seatId, show, session, nome, status}){
   const code = ticketCode(session.id, seatId);
   const displayLabel = seatDisplayLabel(seatId);
@@ -1603,9 +1660,7 @@ async function sendTicketEmail(info){
   const code = ticketCode(currentSessionId, info.seatId);
   const displayLabel = seatDisplayLabel(info.seatId);
   try{
-    showToast('Gerando o PDF do ingresso…');
-    const pdfDataUrl = await buildTicketPdfDataUrl(info);
-    await emailjs.send(emailjsConfig.serviceId, emailjsConfig.templateId, {
+    const params = {
       to_email: info.email,
       to_name: info.nome || '',
       show_name: info.show.name || '',
@@ -1613,10 +1668,15 @@ async function sendTicketEmail(info){
       seat_id: displayLabel,
       ticket_code: code,
       status_label: info.status==='convidado' ? 'Cortesia' : 'Pago',
-      pdf_ticket: pdfDataUrl,
-      pdf_filename: 'ingresso-' + code.toLowerCase() + '.pdf'
-    });
-    showToast('E-mail com o ingresso em PDF enviado para ' + info.email);
+      ticket_html: buildTicketEmailHtml(info)
+    };
+    if(EMAILJS_PDF_ATTACHMENT_ENABLED){
+      showToast('Gerando o PDF do ingresso…');
+      params.pdf_ticket = await buildTicketPdfDataUrl(info);
+      params.pdf_filename = 'ingresso-' + code.toLowerCase() + '.pdf';
+    }
+    await emailjs.send(emailjsConfig.serviceId, emailjsConfig.templateId, params);
+    showToast('E-mail com o ingresso enviado para ' + info.email);
   }catch(e){
     console.error(e);
     const msg = e && (e.text || e.message) ? (e.text || e.message) : 'confira a configuração do EmailJS';
