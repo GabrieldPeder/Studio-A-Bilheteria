@@ -385,6 +385,7 @@
       <button data-tab="publico" class="active">Site Público</button>
       <button data-tab="painel" class="admin-tab">Painel de Controle</button>
       <button data-tab="checkin" class="admin-tab">Check-in</button>
+      <button data-tab="pdfs" class="admin-tab">Ingressos em PDF</button>
       <button data-tab="config" class="admin-tab">Configurações</button>
     </nav>
     <div id="authStatus" class="auth-status"></div>
@@ -1663,7 +1664,7 @@ function buildTicketEmailHtml({seatId, show, session, nome, status}){
 /* ---------- Ingresso em PDF (gerado no navegador, sem servidor) — hoje só funciona se o plano do
    EmailJS tiver suporte a anexo (Personal ou superior). No plano Free, o e-mail usa o HTML acima. ---------- */
 const EMAILJS_PDF_ATTACHMENT_ENABLED = false; // mude pra true se fizer upgrade do plano no EmailJS e configurar o Attachment
-async function buildTicketPdfDataUrl({seatId, show, session, nome, status}){
+async function buildTicketPdfDoc({seatId, show, session, nome, status}){
   const code = ticketCode(session.id, seatId);
   const displayLabel = seatDisplayLabel(seatId);
   let qrDataUrl = null;
@@ -1717,6 +1718,10 @@ async function buildTicketPdfDataUrl({seatId, show, session, nome, status}){
   doc.setFontSize(6.5);
   doc.text('Apresente este QR Code na entrada. Ingresso válido para uma única entrada, na sessão indicada.', 6, 76, {maxWidth: pageW-12});
 
+  return doc;
+}
+async function buildTicketPdfDataUrl(info){
+  const doc = await buildTicketPdfDoc(info);
   return doc.output('datauristring');
 }
 async function sendTicketEmail(info){
@@ -2031,6 +2036,95 @@ function attachRoomLayoutHandlers(){
   }
 }
 
+/* ---------- Ingressos em PDF (busca por nome, gera o PDF na hora, sem guardar nada) ---------- */
+// Carrega (uma vez, sob demanda) os assentos de sessões que ainda não foram abertas nesta visita —
+// as que já têm listener ao vivo (a sessão selecionada no Painel) não são recarregadas.
+async function loadAllSeatsForSearch(){
+  const sessionIds = [];
+  (CONFIG.shows||[]).forEach(show=> (show.sessions||[]).forEach(se=> sessionIds.push(se.id)));
+  const toLoad = sessionIds.filter(id => !SEATS_CACHE[id]);
+  if(!toLoad.length) return;
+  await Promise.all(toLoad.map(async id=>{
+    try{
+      const snap = await db.ref('seats/'+id).once('value');
+      SEATS_CACHE[id] = snap.val() || {};
+    }catch(e){
+      console.error('Erro ao carregar assentos da sessão '+id, e);
+    }
+  }));
+}
+async function renderPdfLookup(){
+  if(!currentUser){ renderLoginScreen(); return; }
+  const content = document.getElementById('content');
+  content.innerHTML = `<div class="panel">
+    <h2>Ingressos em PDF</h2>
+    <p class="note" style="margin-top:-8px;">Busque pelo nome do comprador em todos os espetáculos e sessões, baixe o PDF exato do ingresso (o mesmo que sai na impressão) e envie por onde preferir — e-mail do corporativo, WhatsApp, etc. Não precisa imprimir nada.</p>
+    <div class="search-box" style="margin-top:14px;">
+      <input id="buscaPdf" placeholder="Nome do comprador…"/>
+      <button class="btn ghost tiny" id="btnBuscarPdf">Buscar</button>
+    </div>
+    <p class="note" id="pdfSearchStatus"></p>
+    <div id="pdfResults"></div>
+  </div>`;
+  const input = document.getElementById('buscaPdf');
+  document.getElementById('btnBuscarPdf').addEventListener('click', doPdfSearch);
+  input.addEventListener('keydown', e=>{ if(e.key==='Enter') doPdfSearch(); });
+  input.focus();
+}
+async function doPdfSearch(){
+  const term = document.getElementById('buscaPdf').value.trim().toLowerCase();
+  const box = document.getElementById('pdfResults');
+  const status = document.getElementById('pdfSearchStatus');
+  if(!term){ box.innerHTML=''; status.textContent=''; return; }
+  status.textContent = 'Carregando dados de todas as sessões…';
+  box.innerHTML = '';
+  await loadAllSeatsForSearch();
+  status.textContent = '';
+  const results = [];
+  (CONFIG.shows||[]).forEach(show=>{
+    (show.sessions||[]).forEach(session=>{
+      const seats = SEATS_CACHE[session.id] || {};
+      Object.entries(seats).forEach(([id,d])=>{
+        if(d && (d.status==='vendido'||d.status==='convidado') && d.nome && d.nome.toLowerCase().includes(term)){
+          results.push({show, session, seatId:id, data:d});
+        }
+      });
+    });
+  });
+  if(!results.length){ box.innerHTML = '<div class="empty">Nenhum ingresso encontrado com esse nome.</div>'; return; }
+  results.sort((a,b)=> (a.session.date||'').localeCompare(b.session.date||'') || a.seatId.localeCompare(b.seatId));
+  box.innerHTML = '<div class="found-list">' + results.map((r,i)=>{
+    const numberMap = computeSeatNumberMap(SEATS_CACHE[r.session.id]||{}).map;
+    const label = seatDisplayLabel(r.seatId, numberMap);
+    const contact = [r.data.telefone, r.data.email].filter(Boolean).map(escapeHtml).join(' · ');
+    return `<div class="found-item"><span>Assento <b>${escapeHtml(label)}</b> — ${escapeHtml(r.data.nome)}${contact?(' — '+contact):''}<br/><small>${escapeHtml(r.show.name)} — ${escapeHtml(sessionLabel(r.session))}</small> <span class="badge ${r.data.status}">${statusLabel(r.data.status)}</span></span><button class="btn ghost tiny" data-pdf-idx="${i}">⬇️ Baixar PDF</button></div>`;
+  }).join('') + '</div>';
+  box.querySelectorAll('[data-pdf-idx]').forEach(btn=>{
+    btn.addEventListener('click', async ()=>{
+      const r = results[parseInt(btn.dataset.pdfIdx,10)];
+      const originalLabel = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = 'Gerando…';
+      try{
+        const dataUrl = await buildTicketPdfDataUrl({seatId:r.seatId, show:r.show, session:r.session, nome:r.data.nome, status:r.data.status});
+        const code = ticketCode(r.session.id, r.seatId);
+        const a = document.createElement('a');
+        a.href = dataUrl;
+        a.download = 'ingresso-' + code.toLowerCase() + '.pdf';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+      }catch(e){
+        console.error(e);
+        showToast('Erro ao gerar o PDF');
+      }finally{
+        btn.disabled = false;
+        btn.textContent = originalLabel;
+      }
+    });
+  });
+}
+
 /* ---------- Check-in (leitura de QR) ---------- */
 let scanStream = null;
 let scanLoopId = null;
@@ -2186,6 +2280,7 @@ function switchTab(tab){
   if(tab==='painel') renderPainel();
   else if(tab==='publico') renderPublico();
   else if(tab==='checkin') renderCheckin();
+  else if(tab==='pdfs') renderPdfLookup();
   else renderConfig();
 }
 
