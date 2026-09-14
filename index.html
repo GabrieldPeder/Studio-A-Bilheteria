@@ -16,6 +16,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
   :root{
     --bg: #0c0a0d;
@@ -151,6 +152,42 @@
   .ticket-actions{display:flex; gap:8px; margin-bottom:14px;}
   .ticket-actions button{flex:1;}
 
+  /* Ingresso premium: mantém a identidade do Studio A e varia por espetáculo.
+     Fica fora do @media print de propósito: também é usado fora da impressão, pra "fotografar"
+     o ingresso (html2canvas) e gerar o PDF com a mesma cara exata do impresso. */
+  #printArea{gap:12px; align-content:flex-start;}
+  .ticket{
+    --ticket-accent:#e4136f; --ticket-soft:#f26fa8; --ticket-deep:#6d0936;
+    width:300px; min-height:470px; padding:0; overflow:hidden; position:relative;
+    border:1px solid #d9d2d6; border-radius:18px; background:#fff;
+    color:#1d151b; box-shadow:none; text-align:left;
+  }
+  .ticket.theme-frozen{--ticket-accent:#477ea6;--ticket-soft:#87b6d8;--ticket-deep:#183b59;}
+  .ticket.theme-wicked{--ticket-accent:#3b8a5b;--ticket-soft:#84bd79;--ticket-deep:#173f29;}
+  .ticket.theme-showman{--ticket-accent:#9d3137;--ticket-soft:#d6a85e;--ticket-deep:#4f171c;}
+  .ticket-hero{height:126px; position:relative; overflow:hidden; padding:18px 18px 14px; background:linear-gradient(135deg,var(--ticket-deep),var(--ticket-accent)); color:#fff;}
+  .ticket-hero.has-bg::before{content:"";position:absolute;inset:0;background-image:var(--ticket-bg);background-size:contain;background-repeat:no-repeat;background-position:center;opacity:.34;filter:saturate(.88) contrast(1.03);}
+  .ticket-hero::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.35),transparent 60%);}
+  .ticket-hero > *{position:relative;z-index:1;}
+  .ticket-brandline{display:flex;align-items:center;gap:9px;}
+  .ticket-logo{width:34px;height:34px;border-radius:8px;margin:0;background:#fff;}
+  .ticket-brandname{font-size:11px;letter-spacing:.15em;text-transform:uppercase;font-weight:700;opacity:.92;}
+  .ticket-show{font-family:'Cormorant Garamond',serif;font-size:25px;line-height:1;margin:15px 0 0;color:#fff;font-weight:700;}
+  .ticket-body{padding:16px 18px 14px;}
+  .ticket-info-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:10px;margin-bottom:14px;}
+  .ticket-info{padding:9px 10px;background:#f7f3f5;border-radius:9px;border:1px solid #ece4e8;}
+  .ticket-info small{display:block;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:#7c6d75;font-weight:700;margin-bottom:3px;}
+  .ticket-info strong{font-size:12px;line-height:1.25;display:block;color:#21171d;}
+  .ticket-info.seat strong{font-family:'Cormorant Garamond',serif;font-size:24px;color:var(--ticket-accent);line-height:.9;}
+  .ticket-person{font-size:11px;color:#554850;margin:0 0 11px;padding-bottom:11px;border-bottom:1px dashed #cfc4ca;}
+  .ticket-person b{color:#21171d;}
+  .ticket-bottom{display:grid;grid-template-columns:112px 1fr;gap:13px;align-items:center;}
+  .ticket-qr{width:112px;height:112px;margin:0;border:6px solid #fff;box-shadow:0 0 0 1px #ddd;border-radius:8px;}
+  .ticket-code{font-family:monospace;letter-spacing:.06em;font-size:9px;color:#6b5e65;word-break:break-all;margin:0 0 7px;}
+  .ticket-status{display:inline-block; padding:3px 12px; border-radius:20px; font-size:10px; font-weight:700; letter-spacing:.05em; margin:0 0 8px;border:none;background:var(--ticket-accent);color:#fff;}
+  .ticket-rules{font-size:8.5px;line-height:1.35;color:#756870;margin:0;}
+  .ticket-footer{height:7px;background:linear-gradient(90deg,var(--ticket-deep),var(--ticket-accent),var(--ticket-soft));}
+
   .print-only{display:none;}
   @media print{
     html, body{ background:#fff !important; }
@@ -160,20 +197,7 @@
       display:flex !important; flex-wrap:wrap; align-content:flex-start; justify-content:center;
       gap:14px; background:#fff; margin:0; padding:10px;
     }
-    .ticket{
-      width:250px; margin:0; text-align:center; font-family:'Work Sans', sans-serif;
-      border:2px dashed #000; border-radius:14px; padding:16px; color:#000;
-      break-inside:avoid; page-break-inside:avoid;
-    }
-    .ticket-logo{width:52px; height:52px; border-radius:10px; margin-bottom:6px;}
-    .ticket h2{font-family:'Cormorant Garamond', serif; margin:3px 0; font-size:19px;}
-    .ticket-show{font-weight:700; font-size:13.5px; margin:5px 0 2px;}
-    .ticket-session{color:#444; font-size:11px; margin:0 0 8px;}
-    .ticket-seat{font-size:16px; margin:8px 0 3px;}
-    .ticket-name{font-size:12px; margin:0 0 8px;}
-    .ticket-qr{width:96px; height:96px; margin:8px auto;}
-    .ticket-code{letter-spacing:.1em; font-size:10px; color:#666;}
-    .ticket-status{display:inline-block; margin-top:8px; padding:3px 12px; border:1px solid #000; border-radius:20px; font-size:10px; font-weight:700; letter-spacing:.05em;}
+    .ticket{margin:0; break-inside:avoid; page-break-inside:avoid;}
   }
 
   .show-card{background:var(--bg-panel-2); border:1px solid var(--line); border-radius:10px; padding:14px; margin-bottom:12px;}
@@ -333,42 +357,6 @@
   }
   @media(max-width:420px){.report-grid{grid-template-columns:1fr 1fr}.report-stat{padding:11px}.report-stat .value{font-size:21px}}
 
-  /* Ingresso premium: mantém a identidade do Studio A e varia por espetáculo */
-  @media print{
-    #printArea{gap:12px!important;align-items:flex-start;}
-    .ticket{
-      --ticket-accent:#e4136f; --ticket-soft:#f26fa8; --ticket-deep:#6d0936;
-      width:300px; min-height:470px; padding:0!important; overflow:hidden; position:relative;
-      border:1px solid #d9d2d6!important; border-radius:18px!important; background:#fff!important;
-      color:#1d151b!important; box-shadow:none!important; text-align:left!important;
-    }
-    .ticket.theme-frozen{--ticket-accent:#477ea6;--ticket-soft:#87b6d8;--ticket-deep:#183b59;}
-    .ticket.theme-wicked{--ticket-accent:#3b8a5b;--ticket-soft:#84bd79;--ticket-deep:#173f29;}
-    .ticket.theme-showman{--ticket-accent:#9d3137;--ticket-soft:#d6a85e;--ticket-deep:#4f171c;}
-    .ticket-hero{height:126px; position:relative; overflow:hidden; padding:18px 18px 14px; background:linear-gradient(135deg,var(--ticket-deep),var(--ticket-accent)); color:#fff;}
-    .ticket-hero.has-bg::before{content:"";position:absolute;inset:0;background-image:var(--ticket-bg);background-size:contain;background-repeat:no-repeat;background-position:center;opacity:.34;filter:saturate(.88) contrast(1.03);}
-    .ticket-hero::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.35),transparent 60%);}
-    .ticket-hero > *{position:relative;z-index:1;}
-    .ticket-brandline{display:flex;align-items:center;gap:9px;}
-    .ticket-logo{width:34px!important;height:34px!important;border-radius:8px!important;margin:0!important;background:#fff;}
-    .ticket-brandname{font-size:11px;letter-spacing:.15em;text-transform:uppercase;font-weight:700;opacity:.92;}
-    .ticket-show{font-family:'Cormorant Garamond',serif!important;font-size:25px!important;line-height:1!important;margin:15px 0 0!important;color:#fff!important;font-weight:700!important;}
-    .ticket-body{padding:16px 18px 14px;}
-    .ticket-info-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:10px;margin-bottom:14px;}
-    .ticket-info{padding:9px 10px;background:#f7f3f5;border-radius:9px;border:1px solid #ece4e8;}
-    .ticket-info small{display:block;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:#7c6d75;font-weight:700;margin-bottom:3px;}
-    .ticket-info strong{font-size:12px;line-height:1.25;display:block;color:#21171d;}
-    .ticket-info.seat strong{font-family:'Cormorant Garamond',serif;font-size:24px;color:var(--ticket-accent);line-height:.9;}
-    .ticket-person{font-size:11px;color:#554850;margin:0 0 11px;padding-bottom:11px;border-bottom:1px dashed #cfc4ca;}
-    .ticket-person b{color:#21171d;}
-    .ticket-bottom{display:grid;grid-template-columns:112px 1fr;gap:13px;align-items:center;}
-    .ticket-qr{width:112px!important;height:112px!important;margin:0!important;border:6px solid #fff;box-shadow:0 0 0 1px #ddd;border-radius:8px;}
-    .ticket-code{font-family:monospace!important;letter-spacing:.06em!important;font-size:9px!important;color:#6b5e65!important;word-break:break-all;margin:0 0 7px!important;}
-    .ticket-status{margin:0 0 8px!important;border:none!important;background:var(--ticket-accent)!important;color:#fff!important;padding:4px 9px!important;}
-    .ticket-rules{font-size:8.5px;line-height:1.35;color:#756870;margin:0;}
-    .ticket-footer{height:7px;background:linear-gradient(90deg,var(--ticket-deep),var(--ticket-accent),var(--ticket-soft));}
-  }
-
 .stair-seatmap{min-width:fit-content}.stair-row{width:max-content;margin-left:auto;margin-right:auto}.stair-empty{visibility:hidden;pointer-events:none;background:transparent!important;border-color:transparent!important;box-shadow:none!important}.stair-row .seat{flex:0 0 20px}.stair-row .aisle-gap{flex:0 0 16px!important}.stair-row .row-label{flex:0 0 18px}</style>
 </head>
 <body>
@@ -397,6 +385,7 @@
 
 <div id="toast" class="toast"></div>
 <div id="printArea" class="print-only"></div>
+<div id="pdfSnapshotArea" style="position:fixed; left:-9999px; top:0; z-index:-1;"></div>
 
 <script>
 /* =========================================================
@@ -1475,10 +1464,10 @@ function findShowAndSession(sessionId){
   }
   return null;
 }
-function buildTicketHtml({seatId, show, session, nome, status}){
+function buildTicketHtml({seatId, show, session, nome, status, qrOverrideSrc}){
   const code = ticketCode(session.id, seatId);
   const displayLabel = seatDisplayLabel(seatId);
-  const qr = 'https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent('STUDIOA|'+code);
+  const qr = qrOverrideSrc || ('https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent('STUDIOA|'+code));
   const lname = (show.name||'').toLowerCase();
   const theme = lname.includes('frozen') ? 'theme-frozen' : lname.includes('wicked') ? 'theme-wicked' : (lname.includes('show') || lname.includes('rei')) ? 'theme-showman' : '';
   const heroBg = show.backgroundImage ? `style="--ticket-bg:url('${show.backgroundImage.replace(/'/g,"\\'")}')"` : '';
@@ -1661,67 +1650,40 @@ function buildTicketEmailHtml({seatId, show, session, nome, status}){
   <tr><td style="height:6px;background-color:${accent};background-image:linear-gradient(90deg,${deep},${accent},${soft});border-radius:0 0 14px 14px;"></td></tr>
 </table>`;
 }
-/* ---------- Ingresso em PDF (gerado no navegador, sem servidor) — hoje só funciona se o plano do
-   EmailJS tiver suporte a anexo (Personal ou superior). No plano Free, o e-mail usa o HTML acima. ---------- */
+/* ---------- Ingresso em PDF (gerado no navegador, sem servidor) ----------
+   Usa o MESMO HTML/CSS do ingresso que seria impresso (fundo do espetáculo, cores do tema, layout)
+   e "fotografa" ele com html2canvas, depois cola essa imagem dentro de um PDF — ou seja, o PDF fica
+   com a cara exata do ingresso impresso. O QR Code é gerado localmente (biblioteca qrcode, sem
+   depender de um serviço externo) só nesse caminho, pra evitar qualquer risco de a "foto" falhar por
+   causa de uma imagem de outro site sem permissão de CORS. */
+const BLANK_PIXEL_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
 const EMAILJS_PDF_ATTACHMENT_ENABLED = false; // mude pra true se fizer upgrade do plano no EmailJS e configurar o Attachment
-async function buildTicketPdfDoc({seatId, show, session, nome, status}){
+async function buildTicketPdfDataUrl(info){
+  const { seatId, show, session, status } = info;
   const code = ticketCode(session.id, seatId);
-  const displayLabel = seatDisplayLabel(seatId);
   let qrDataUrl = null;
   try{
     qrDataUrl = await QRCode.toDataURL('STUDIOA|'+code, { margin:1, width:260, color:{ dark:'#210a15', light:'#ffffff' } });
-  }catch(e){ /* segue sem QR se algo falhar */ }
+  }catch(e){ console.error('Erro ao gerar QR local:', e); }
 
-  const { jsPDF } = window.jspdf;
-  const pageW = 150, pageH = 80;
-  const doc = new jsPDF({ orientation:'landscape', unit:'mm', format:[pageW,pageH] });
+  const holder = document.getElementById('pdfSnapshotArea');
+  holder.innerHTML = buildTicketHtml(Object.assign({}, info, { qrOverrideSrc: qrDataUrl || BLANK_PIXEL_PNG }));
+  const ticketEl = holder.querySelector('.ticket');
+  await waitForImages(holder, 4000);
 
-  doc.setFillColor(12,10,13); doc.rect(0,0,pageW,pageH,'F');
-  doc.setFillColor(228,19,111); doc.rect(0,0,pageW,14,'F');
-
+  let canvas;
   try{
-    const logoSrc = document.querySelector('.brand img').src;
-    doc.addImage(logoSrc, 'PNG', 5, 2, 10, 10);
-  }catch(e){ /* segue sem logo se algo falhar */ }
-
-  doc.setTextColor(255,255,255);
-  doc.setFont('helvetica','bold'); doc.setFontSize(12);
-  doc.text('Studio A · Bilheteria', 19, 9);
-
-  doc.setFont('helvetica','bold'); doc.setFontSize(15);
-  doc.setTextColor(246,238,242);
-  doc.text(show.name || 'Espetáculo', 6, 25, {maxWidth: pageW-46});
-
-  const dateText = session.date ? new Date(session.date+'T12:00:00').toLocaleDateString('pt-BR',{day:'2-digit',month:'2-digit',year:'numeric'}) : 'Data a confirmar';
-  doc.setFont('helvetica','normal'); doc.setFontSize(9.5);
-  doc.setTextColor(200,190,196);
-  doc.text('Data: '+dateText, 6, 33);
-  doc.text('Horário: '+(session.time || '--:--'), 6, 39);
-  doc.text('Sessão: '+sessionLabel(session), 6, 45, {maxWidth: pageW-46});
-
-  doc.setFont('helvetica','bold'); doc.setFontSize(12);
-  doc.setTextColor(255,255,255);
-  doc.text('Assento: '+displayLabel, 6, 54);
-  doc.setFont('helvetica','normal'); doc.setFontSize(10);
-  doc.text('Ingresso de: '+(nome || 'Visitante'), 6, 61, {maxWidth: pageW-46});
-
-  doc.setFont('helvetica','bold'); doc.setFontSize(9);
-  doc.setTextColor(228,19,111);
-  doc.text(status==='convidado' ? 'CORTESIA' : 'PAGO', 6, 70);
-
-  if(qrDataUrl){
-    doc.addImage(qrDataUrl, 'PNG', pageW-38, 16, 32, 32);
+    canvas = await html2canvas(ticketEl, { backgroundColor:'#ffffff', scale:3, useCORS:true, logging:false });
+  } finally {
+    holder.innerHTML = '';
   }
-  doc.setFont('helvetica','normal'); doc.setFontSize(7);
-  doc.setTextColor(200,190,196);
-  doc.text(code.toUpperCase(), pageW-38, 51, {maxWidth:32});
-  doc.setFontSize(6.5);
-  doc.text('Apresente este QR Code na entrada. Ingresso válido para uma única entrada, na sessão indicada.', 6, 76, {maxWidth: pageW-12});
 
-  return doc;
-}
-async function buildTicketPdfDataUrl(info){
-  const doc = await buildTicketPdfDoc(info);
+  const imgData = canvas.toDataURL('image/png');
+  const { jsPDF } = window.jspdf;
+  const pageW = 90; // mm — mantém a mesma proporção do ingresso na tela (largura x altura)
+  const pageH = pageW * (canvas.height / canvas.width);
+  const doc = new jsPDF({ orientation: pageH >= pageW ? 'portrait' : 'landscape', unit:'mm', format:[pageW, pageH] });
+  doc.addImage(imgData, 'PNG', 0, 0, pageW, pageH);
   return doc.output('datauristring');
 }
 async function sendTicketEmail(info){
