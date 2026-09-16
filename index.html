@@ -165,7 +165,7 @@
   .ticket.theme-frozen{--ticket-accent:#477ea6;--ticket-soft:#87b6d8;--ticket-deep:#183b59;}
   .ticket.theme-wicked{--ticket-accent:#3b8a5b;--ticket-soft:#84bd79;--ticket-deep:#173f29;}
   .ticket.theme-showman{--ticket-accent:#9d3137;--ticket-soft:#d6a85e;--ticket-deep:#4f171c;}
-  .ticket-hero{height:126px; position:relative; overflow:hidden; padding:18px 18px 14px; background:linear-gradient(135deg,var(--ticket-deep),var(--ticket-accent)); color:#fff;}
+  .ticket-hero{height:172px; position:relative; overflow:hidden; padding:18px 18px 14px; background:linear-gradient(135deg,var(--ticket-deep),var(--ticket-accent)); color:#fff;}
   .ticket-hero.has-bg::before{content:"";position:absolute;inset:0;background-image:var(--ticket-bg);background-size:cover;background-repeat:no-repeat;background-position:center;opacity:.55;filter:saturate(.9) contrast(1.05);}
   .ticket-hero::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.35),transparent 60%);}
   .ticket-hero > *{position:relative;z-index:1;}
@@ -175,16 +175,17 @@
   .ticket-show{font-family:'Cormorant Garamond',serif;font-size:25px;line-height:1;margin:15px 0 0;color:#fff;font-weight:700;}
   .ticket-body{padding:16px 18px 14px;}
   .ticket-info-grid{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:10px;margin:-10px -10px 4px -10px;}
-  .ticket-info{padding:9px 10px;background:#f7f3f5;border-radius:9px;border:1px solid #ece4e8;width:50%;vertical-align:top;}
+  .ticket-info{padding:8px 9px;background:#f7f3f5;border-radius:9px;border:1px solid #ece4e8;width:50%;vertical-align:top;}
   .ticket-info small{display:block;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:#7c6d75;font-weight:700;margin-bottom:3px;}
   .ticket-info strong{font-size:12px;line-height:1.25;display:block;color:#21171d;}
-  .ticket-info.seat strong{font-family:'Cormorant Garamond',serif;font-size:24px;color:var(--ticket-accent);line-height:.9;}
+  .ticket-info.seat strong{font-family:'Cormorant Garamond',serif;font-size:20px;color:var(--ticket-accent);line-height:1;white-space:nowrap;}
   .ticket-person{font-size:11px;color:#554850;margin:0 0 11px;padding-bottom:11px;border-bottom:1px dashed #cfc4ca;}
   .ticket-person b{color:#21171d;}
   .ticket-bottom{width:100%;border-collapse:collapse;}
   .ticket-bottom td{vertical-align:middle;}
   .ticket-bottom td.ticket-qr-cell{width:125px;padding-right:13px;}
-  .ticket-qr{width:112px;height:112px;margin:0;border:6px solid #fff;box-shadow:0 0 0 1px #ddd;border-radius:8px;display:block;}
+  .ticket-qr-frame{width:112px;height:112px;padding:6px;background:#fff;box-shadow:0 0 0 1px #ddd;border-radius:8px;box-sizing:border-box;display:block;}
+  .ticket-qr{width:100%;height:100%;margin:0;display:block;}
   .ticket-code{font-family:monospace;letter-spacing:.06em;font-size:9px;color:#6b5e65;word-break:break-all;margin:0 0 7px;}
   .ticket-status{display:inline-block; padding:3px 12px; border-radius:20px; font-size:10px; font-weight:700; letter-spacing:.05em; margin:0 0 8px;border:none;background:var(--ticket-accent);color:#fff;}
   .ticket-rules{font-size:8.5px;line-height:1.35;color:#756870;margin:0;}
@@ -1498,7 +1499,7 @@ function buildTicketHtml({seatId, show, session, nome, status, qrOverrideSrc}){
         </tbody></table>
         <p class="ticket-person">Ingresso de <b>${escapeHtml(nome||'Visitante')}</b></p>
         <table class="ticket-bottom"><tbody><tr>
-          <td class="ticket-qr-cell"><img class="ticket-qr" src="${qr}" alt="QR Code do ingresso"/></td>
+          <td class="ticket-qr-cell"><div class="ticket-qr-frame"><img class="ticket-qr" src="${qr}" alt="QR Code do ingresso"/></div></td>
           <td>
             <p class="ticket-code">${escapeHtml(code.toUpperCase())}</p>
             <span class="ticket-status">${status==='convidado' ? 'CORTESIA' : 'PAGO'}</span>
@@ -1688,14 +1689,32 @@ async function buildTicketPdfDataUrl(info){
   const code = ticketCode(session.id, seatId);
   let qrDataUrl = null;
   try{
-    qrDataUrl = await QRCode.toDataURL('STUDIOA|'+code, { margin:1, width:260, color:{ dark:'#210a15', light:'#ffffff' } });
+    qrDataUrl = await QRCode.toDataURL('STUDIOA|'+code, { margin:1, width:400, color:{ dark:'#210a15', light:'#ffffff' } });
   }catch(e){ console.error('Erro ao gerar QR local:', e); }
 
   const holder = document.getElementById('pdfSnapshotArea');
   holder.innerHTML = buildTicketHtml(Object.assign({}, info, { qrOverrideSrc: qrDataUrl || BLANK_PIXEL_PNG }));
   const ticketEl = holder.querySelector('.ticket');
+  const qrImg = holder.querySelector('.ticket-qr');
   await waitForImages(holder, 4000);
   await waitTwoFrames();
+
+  // O html2canvas às vezes falha em reproduzir fielmente imagens pequenas (como o QR) — em vez de
+  // arriscar, escondemos só o QR da "foto" (o espaço dele continua reservado no layout) e colamos o
+  // QR de verdade depois, direto no PDF, na posição exata — o mesmo jeito confiável de antes.
+  let qrRectRel = null;
+  if(qrImg && qrDataUrl){
+    const ticketRect = ticketEl.getBoundingClientRect();
+    const qrRect = qrImg.getBoundingClientRect();
+    qrRectRel = {
+      x: qrRect.left - ticketRect.left,
+      y: qrRect.top - ticketRect.top,
+      w: qrRect.width,
+      h: qrRect.height,
+      ticketW: ticketRect.width
+    };
+    qrImg.style.visibility = 'hidden';
+  }
 
   let canvas;
   try{
@@ -1710,6 +1729,11 @@ async function buildTicketPdfDataUrl(info){
   const pageH = pageW * (canvas.height / canvas.width);
   const doc = new jsPDF({ orientation: pageH >= pageW ? 'portrait' : 'landscape', unit:'mm', format:[pageW, pageH] });
   doc.addImage(imgData, 'PNG', 0, 0, pageW, pageH);
+
+  if(qrRectRel){
+    const scaleMm = pageW / qrRectRel.ticketW;
+    doc.addImage(qrDataUrl, 'PNG', qrRectRel.x*scaleMm, qrRectRel.y*scaleMm, qrRectRel.w*scaleMm, qrRectRel.h*scaleMm);
+  }
   return doc.output('datauristring');
 }
 async function sendTicketEmail(info){
