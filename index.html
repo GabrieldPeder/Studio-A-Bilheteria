@@ -15,7 +15,7 @@
 <script src="https://cdn.jsdelivr.net/npm/jsqr@1.4.0/dist/jsQR.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@emailjs/browser@4/dist/email.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.3/build/qrcode.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode-generator@1.4.4/qrcode.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 <style>
   :root{
@@ -165,7 +165,7 @@
   .ticket.theme-frozen{--ticket-accent:#477ea6;--ticket-soft:#87b6d8;--ticket-deep:#183b59;}
   .ticket.theme-wicked{--ticket-accent:#3b8a5b;--ticket-soft:#84bd79;--ticket-deep:#173f29;}
   .ticket.theme-showman{--ticket-accent:#9d3137;--ticket-soft:#d6a85e;--ticket-deep:#4f171c;}
-  .ticket-hero{height:172px; position:relative; overflow:hidden; padding:18px 18px 14px; background:linear-gradient(135deg,var(--ticket-deep),var(--ticket-accent)); color:#fff;}
+  .ticket-hero{height:150px; position:relative; overflow:hidden; padding:18px 18px 14px; background:linear-gradient(135deg,var(--ticket-deep),var(--ticket-accent)); color:#fff;}
   .ticket-hero.has-bg::before{content:"";position:absolute;inset:0;background-image:var(--ticket-bg);background-size:cover;background-repeat:no-repeat;background-position:center;opacity:.55;filter:saturate(.9) contrast(1.05);}
   .ticket-hero::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.35),transparent 60%);}
   .ticket-hero > *{position:relative;z-index:1;}
@@ -178,7 +178,9 @@
   .ticket-info{padding:8px 9px;background:#f7f3f5;border-radius:9px;border:1px solid #ece4e8;width:50%;vertical-align:top;}
   .ticket-info small{display:block;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:#7c6d75;font-weight:700;margin-bottom:3px;}
   .ticket-info strong{font-size:12px;line-height:1.25;display:block;color:#21171d;}
-  .ticket-info.seat strong{font-family:'Cormorant Garamond',serif;font-size:20px;color:var(--ticket-accent);line-height:1;white-space:nowrap;}
+  .ticket-seat-box{background:#f7f3f5;border:1px solid #ece4e8;border-radius:9px;padding:10px 12px 11px;margin:0 0 12px;text-align:center;}
+  .ticket-seat-box small{display:block;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:#7c6d75;font-weight:700;margin-bottom:2px;}
+  .ticket-seat-box strong{font-family:'Cormorant Garamond',serif;font-size:32px;line-height:1;display:block;color:var(--ticket-accent);}
   .ticket-person{font-size:11px;color:#554850;margin:0 0 11px;padding-bottom:11px;border-bottom:1px dashed #cfc4ca;}
   .ticket-person b{color:#21171d;}
   .ticket-bottom{width:100%;border-collapse:collapse;}
@@ -1467,10 +1469,41 @@ function findShowAndSession(sessionId){
   }
   return null;
 }
-function buildTicketHtml({seatId, show, session, nome, status, qrOverrideSrc}){
+const BLANK_PIXEL_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+// QR Code gerado 100% no navegador (biblioteca qrcode-generator — síncrona, sem dependências, sem
+// precisar de internet no dia do evento). Usado no ingresso impresso/na tela e na base do PDF.
+function qrGifDataUrl(text){
+  try{
+    const qr = qrcode(0, 'M'); // 0 = detecta o tamanho automaticamente; M = correção de erro média
+    qr.addData(text);
+    qr.make();
+    return qr.createDataURL(8, 4); // tamanho de cada módulo em px, margem em módulos
+  }catch(e){
+    console.error('Erro ao gerar QR Code:', e);
+    return BLANK_PIXEL_PNG;
+  }
+}
+// Versão em PNG do QR (o jsPDF lida melhor com PNG do que com o GIF que a lib gera por padrão) —
+// usada só na hora de colar o QR de verdade dentro do PDF.
+function qrPngDataUrl(text){
+  return new Promise(resolve=>{
+    const img = new Image();
+    img.onload = () => {
+      const canvas = document.createElement('canvas');
+      canvas.width = img.naturalWidth || 200;
+      canvas.height = img.naturalHeight || 200;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+      resolve(canvas.toDataURL('image/png'));
+    };
+    img.onerror = () => resolve(BLANK_PIXEL_PNG);
+    img.src = qrGifDataUrl(text);
+  });
+}
+function buildTicketHtml({seatId, show, session, nome, status}){
   const code = ticketCode(session.id, seatId);
   const displayLabel = seatDisplayLabel(seatId);
-  const qr = qrOverrideSrc || ('https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=' + encodeURIComponent('STUDIOA|'+code));
+  const qr = qrGifDataUrl('STUDIOA|'+code);
   const lname = (show.name||'').toLowerCase();
   const theme = lname.includes('frozen') ? 'theme-frozen' : lname.includes('wicked') ? 'theme-wicked' : (lname.includes('show') || lname.includes('rei')) ? 'theme-showman' : '';
   const heroBg = show.backgroundImage ? `style="--ticket-bg:url('${show.backgroundImage.replace(/'/g,"\\'")}')"` : '';
@@ -1493,10 +1526,10 @@ function buildTicketHtml({seatId, show, session, nome, status, qrOverrideSrc}){
             <td class="ticket-info"><small>Horário</small><strong>${escapeHtml(timeText)}</strong></td>
           </tr>
           <tr>
-            <td class="ticket-info"><small>Sessão</small><strong>${escapeHtml(sessionLabel(session))}</strong></td>
-            <td class="ticket-info seat"><small>Assento</small><strong>${escapeHtml(displayLabel)}</strong></td>
+            <td class="ticket-info" colspan="2"><small>Sessão</small><strong>${escapeHtml(sessionLabel(session))}</strong></td>
           </tr>
         </tbody></table>
+        <div class="ticket-seat-box"><small>Assento</small><strong>${escapeHtml(displayLabel)}</strong></div>
         <p class="ticket-person">Ingresso de <b>${escapeHtml(nome||'Visitante')}</b></p>
         <table class="ticket-bottom"><tbody><tr>
           <td class="ticket-qr-cell"><div class="ticket-qr-frame"><img class="ticket-qr" src="${qr}" alt="QR Code do ingresso"/></div></td>
@@ -1679,21 +1712,16 @@ function buildTicketEmailHtml({seatId, show, session, nome, status}){
 /* ---------- Ingresso em PDF (gerado no navegador, sem servidor) ----------
    Usa o MESMO HTML/CSS do ingresso que seria impresso (fundo do espetáculo, cores do tema, layout)
    e "fotografa" ele com html2canvas, depois cola essa imagem dentro de um PDF — ou seja, o PDF fica
-   com a cara exata do ingresso impresso. O QR Code é gerado localmente (biblioteca qrcode, sem
-   depender de um serviço externo) só nesse caminho, pra evitar qualquer risco de a "foto" falhar por
-   causa de uma imagem de outro site sem permissão de CORS. */
-const BLANK_PIXEL_PNG = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+   com a cara exata do ingresso impresso. O QR (já gerado localmente por padrão) é colado por cima,
+   direto no PDF, no lugar exato — sem depender do html2canvas pra essa parte. */
 const EMAILJS_PDF_ATTACHMENT_ENABLED = false; // mude pra true se fizer upgrade do plano no EmailJS e configurar o Attachment
 async function buildTicketPdfDataUrl(info){
   const { seatId, show, session, status } = info;
   const code = ticketCode(session.id, seatId);
-  let qrDataUrl = null;
-  try{
-    qrDataUrl = await QRCode.toDataURL('STUDIOA|'+code, { margin:1, width:400, color:{ dark:'#210a15', light:'#ffffff' } });
-  }catch(e){ console.error('Erro ao gerar QR local:', e); }
+  const qrDataUrl = await qrPngDataUrl('STUDIOA|'+code);
 
   const holder = document.getElementById('pdfSnapshotArea');
-  holder.innerHTML = buildTicketHtml(Object.assign({}, info, { qrOverrideSrc: qrDataUrl || BLANK_PIXEL_PNG }));
+  holder.innerHTML = buildTicketHtml(info);
   const ticketEl = holder.querySelector('.ticket');
   const qrImg = holder.querySelector('.ticket-qr');
   await waitForImages(holder, 4000);
@@ -1703,7 +1731,7 @@ async function buildTicketPdfDataUrl(info){
   // arriscar, escondemos só o QR da "foto" (o espaço dele continua reservado no layout) e colamos o
   // QR de verdade depois, direto no PDF, na posição exata — o mesmo jeito confiável de antes.
   let qrRectRel = null;
-  if(qrImg && qrDataUrl){
+  if(qrImg){
     const ticketRect = ticketEl.getBoundingClientRect();
     const qrRect = qrImg.getBoundingClientRect();
     qrRectRel = {
