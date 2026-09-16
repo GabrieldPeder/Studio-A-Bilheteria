@@ -166,7 +166,7 @@
   .ticket.theme-wicked{--ticket-accent:#3b8a5b;--ticket-soft:#84bd79;--ticket-deep:#173f29;}
   .ticket.theme-showman{--ticket-accent:#9d3137;--ticket-soft:#d6a85e;--ticket-deep:#4f171c;}
   .ticket-hero{height:126px; position:relative; overflow:hidden; padding:18px 18px 14px; background:linear-gradient(135deg,var(--ticket-deep),var(--ticket-accent)); color:#fff;}
-  .ticket-hero.has-bg::before{content:"";position:absolute;inset:0;background-image:var(--ticket-bg);background-size:contain;background-repeat:no-repeat;background-position:center;opacity:.34;filter:saturate(.88) contrast(1.03);}
+  .ticket-hero.has-bg::before{content:"";position:absolute;inset:0;background-image:var(--ticket-bg);background-size:cover;background-repeat:no-repeat;background-position:center;opacity:.55;filter:saturate(.9) contrast(1.05);}
   .ticket-hero::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,rgba(0,0,0,.35),transparent 60%);}
   .ticket-hero > *{position:relative;z-index:1;}
   .ticket-brandline{display:flex;align-items:center;gap:9px;}
@@ -174,15 +174,17 @@
   .ticket-brandname{font-size:11px;letter-spacing:.15em;text-transform:uppercase;font-weight:700;opacity:.92;}
   .ticket-show{font-family:'Cormorant Garamond',serif;font-size:25px;line-height:1;margin:15px 0 0;color:#fff;font-weight:700;}
   .ticket-body{padding:16px 18px 14px;}
-  .ticket-info-grid{display:grid;grid-template-columns:1.15fr .85fr;gap:10px;margin-bottom:14px;}
-  .ticket-info{padding:9px 10px;background:#f7f3f5;border-radius:9px;border:1px solid #ece4e8;}
+  .ticket-info-grid{width:100%;table-layout:fixed;border-collapse:separate;border-spacing:10px;margin:-10px -10px 4px -10px;}
+  .ticket-info{padding:9px 10px;background:#f7f3f5;border-radius:9px;border:1px solid #ece4e8;width:50%;vertical-align:top;}
   .ticket-info small{display:block;font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:#7c6d75;font-weight:700;margin-bottom:3px;}
   .ticket-info strong{font-size:12px;line-height:1.25;display:block;color:#21171d;}
   .ticket-info.seat strong{font-family:'Cormorant Garamond',serif;font-size:24px;color:var(--ticket-accent);line-height:.9;}
   .ticket-person{font-size:11px;color:#554850;margin:0 0 11px;padding-bottom:11px;border-bottom:1px dashed #cfc4ca;}
   .ticket-person b{color:#21171d;}
-  .ticket-bottom{display:grid;grid-template-columns:112px 1fr;gap:13px;align-items:center;}
-  .ticket-qr{width:112px;height:112px;margin:0;border:6px solid #fff;box-shadow:0 0 0 1px #ddd;border-radius:8px;}
+  .ticket-bottom{width:100%;border-collapse:collapse;}
+  .ticket-bottom td{vertical-align:middle;}
+  .ticket-bottom td.ticket-qr-cell{width:125px;padding-right:13px;}
+  .ticket-qr{width:112px;height:112px;margin:0;border:6px solid #fff;box-shadow:0 0 0 1px #ddd;border-radius:8px;display:block;}
   .ticket-code{font-family:monospace;letter-spacing:.06em;font-size:9px;color:#6b5e65;word-break:break-all;margin:0 0 7px;}
   .ticket-status{display:inline-block; padding:3px 12px; border-radius:20px; font-size:10px; font-weight:700; letter-spacing:.05em; margin:0 0 8px;border:none;background:var(--ticket-accent);color:#fff;}
   .ticket-rules{font-size:8.5px;line-height:1.35;color:#756870;margin:0;}
@@ -1484,21 +1486,25 @@ function buildTicketHtml({seatId, show, session, nome, status, qrOverrideSrc}){
         <p class="ticket-show">${escapeHtml(show.name||'Espetáculo')}</p>
       </div>
       <div class="ticket-body">
-        <div class="ticket-info-grid">
-          <div class="ticket-info"><small>Data</small><strong>${dateText}</strong></div>
-          <div class="ticket-info"><small>Horário</small><strong>${escapeHtml(timeText)}</strong></div>
-          <div class="ticket-info"><small>Sessão</small><strong>${escapeHtml(sessionLabel(session))}</strong></div>
-          <div class="ticket-info seat"><small>Assento</small><strong>${escapeHtml(displayLabel)}</strong></div>
-        </div>
+        <table class="ticket-info-grid"><tbody>
+          <tr>
+            <td class="ticket-info"><small>Data</small><strong>${dateText}</strong></td>
+            <td class="ticket-info"><small>Horário</small><strong>${escapeHtml(timeText)}</strong></td>
+          </tr>
+          <tr>
+            <td class="ticket-info"><small>Sessão</small><strong>${escapeHtml(sessionLabel(session))}</strong></td>
+            <td class="ticket-info seat"><small>Assento</small><strong>${escapeHtml(displayLabel)}</strong></td>
+          </tr>
+        </tbody></table>
         <p class="ticket-person">Ingresso de <b>${escapeHtml(nome||'Visitante')}</b></p>
-        <div class="ticket-bottom">
-          <img class="ticket-qr" src="${qr}" alt="QR Code do ingresso"/>
-          <div>
+        <table class="ticket-bottom"><tbody><tr>
+          <td class="ticket-qr-cell"><img class="ticket-qr" src="${qr}" alt="QR Code do ingresso"/></td>
+          <td>
             <p class="ticket-code">${escapeHtml(code.toUpperCase())}</p>
             <span class="ticket-status">${status==='convidado' ? 'CORTESIA' : 'PAGO'}</span>
             <p class="ticket-rules">Apresente este QR Code na entrada. O ingresso é válido para uma única entrada e para a sessão indicada. Chegue com antecedência e mantenha o código legível.</p>
-          </div>
-        </div>
+          </td>
+        </tr></tbody></table>
       </div>
       <div class="ticket-footer"></div>
     </div>`;
@@ -1507,6 +1513,18 @@ function waitForImages(container, timeout){
   const imgs = Array.from(container.querySelectorAll('img'));
   if(!imgs.length) return Promise.resolve();
   const loaders = imgs.map(img=>{
+    // decode() é mais confiável que 'load': só resolve quando o navegador já decodificou os pixels
+    // e está pronto pra desenhar a imagem — 'load' às vezes dispara um instante antes disso.
+    if(typeof img.decode === 'function'){
+      return img.decode().catch(()=>{
+        // se decode() falhar (ex: imagem quebrada), cai pro método antigo como reforço
+        if(img.complete && img.naturalWidth > 0) return Promise.resolve();
+        return new Promise(resolve=>{
+          img.addEventListener('load', resolve, {once:true});
+          img.addEventListener('error', resolve, {once:true});
+        });
+      });
+    }
     if(img.complete && img.naturalWidth > 0) return Promise.resolve();
     return new Promise(resolve=>{
       img.addEventListener('load', resolve, {once:true});
@@ -1514,6 +1532,13 @@ function waitForImages(container, timeout){
     });
   });
   return Promise.race([Promise.all(loaders), new Promise(r=>setTimeout(r, timeout || 2500))]);
+}
+// Espera dois quadros de animação — dá tempo do navegador terminar de desenhar (layout + paint)
+// antes de tirar a "foto" com html2canvas. Sem isso, a captura às vezes pega o ingresso pela metade.
+function waitTwoFrames(){
+  return new Promise(resolve=>{
+    requestAnimationFrame(()=>requestAnimationFrame(resolve));
+  });
 }
 async function printTicket(info){
   const holder = document.getElementById('printArea');
@@ -1670,10 +1695,11 @@ async function buildTicketPdfDataUrl(info){
   holder.innerHTML = buildTicketHtml(Object.assign({}, info, { qrOverrideSrc: qrDataUrl || BLANK_PIXEL_PNG }));
   const ticketEl = holder.querySelector('.ticket');
   await waitForImages(holder, 4000);
+  await waitTwoFrames();
 
   let canvas;
   try{
-    canvas = await html2canvas(ticketEl, { backgroundColor:'#ffffff', scale:3, useCORS:true, logging:false });
+    canvas = await html2canvas(ticketEl, { backgroundColor:'#ffffff', scale:3, useCORS:true, logging:false, imageTimeout:8000 });
   } finally {
     holder.innerHTML = '';
   }
