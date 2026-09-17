@@ -736,21 +736,57 @@ function totalUnavailableSeats(){
 // "Aluno" (reservada, não é vendida ao público) não contam nessa numeração — por isso o número total
 // muda dinamicamente ao adicionar/remover cadeiras ou ao liberar/reservar uma cadeira de aluno.
 // "seats" é opcional: se não for passado, usa os dados da sessão atualmente selecionada.
+// Numeração sequencial normal (1..N), pulando indisponíveis e alunos. Cadeiras marcadas como
+// "extra" (ver markSeatAsExtra) NÃO entram nesse cálculo — elas têm um número FIXO, guardado no
+// banco desde o momento em que foram liberadas, e são somadas no final, sem nunca recalcular a
+// posição delas. Isso garante que vender/desvender uma cadeira extra nunca embaralha a numeração
+// das cadeiras normais nem a de outras cadeiras extras já numeradas.
 function computeSeatNumberMap(seats){
   const data = seats || SEATS_CACHE[currentSessionId] || {};
   const map = {};
   let n = 0;
+  const extraIds = [];
   ROOM_LAYOUT.forEach(layout=>{
     const width = layout.left + layout.center + layout.right;
     for(let col=1; col<=width; col++){
       const id = layout.row + col;
+      if(data[id] && data[id].extra){ extraIds.push(id); continue; }
       const st = effectiveSeatStatus(data, id);
       if(st==='indisponivel' || st==='aluno') continue;
       n++;
       map[id] = n;
     }
   });
-  return { map, total: n };
+  let total = n;
+  extraIds.forEach(id=>{
+    const num = data[id].extraNumber;
+    if(num!=null){
+      map[id] = num;
+      if(num > total) total = num;
+    }
+  });
+  return { map, total };
+}
+// Libera uma cadeira de aluno como "extra" (vendível), atribuindo o próximo número disponível
+// (sempre depois da última cadeira numerada até agora) e GUARDANDO esse número no banco — ele não
+// é recalculado depois, então vender/mudar o status dessa cadeira nunca muda o número dela.
+async function markSeatAsExtra(sessionId, seatId){
+  const seats = SEATS_CACHE[sessionId] || {};
+  const { total } = computeSeatNumberMap(seats); // nesse momento a cadeira ainda não é 'extra', então 'total' é o maior número já em uso
+  const newNumber = total + 1;
+  const current = seats[seatId] || {};
+  const updated = Object.assign({}, current, { extra:true, extraNumber:newNumber, status: current.status || 'livre' });
+  await db.ref('seats/'+sessionId+'/'+seatId).set(updated);
+  SEATS_CACHE[sessionId] = SEATS_CACHE[sessionId] || {};
+  SEATS_CACHE[sessionId][seatId] = updated;
+  return newNumber;
+}
+// Desfaz a cadeira extra: volta a ser uma cadeira reservada para aluno (remove o registro por
+// completo, igual a "Liberar assento"). O número que ela tinha simplesmente some — os números das
+// outras cadeiras extras não mudam.
+async function unmarkSeatAsExtra(sessionId, seatId){
+  await db.ref('seats/'+sessionId+'/'+seatId).remove();
+  if(SEATS_CACHE[sessionId]) delete SEATS_CACHE[sessionId][seatId];
 }
 function seatDisplayLabel(seatId, numberMap){
   const map = numberMap || computeSeatNumberMap().map;
@@ -1212,10 +1248,12 @@ function openBulkStatusModal(){
         if(isGlobalUnavailable(id)){
           await setGlobalUnavailable(id, false);
         }
+        const existing = (SEATS_CACHE[currentSessionId] && SEATS_CACHE[currentSessionId][id]) || {};
+        const extraFields = existing.extra ? { extra:true, extraNumber:existing.extraNumber } : {};
         let data = null;
-        if(status==='vendido' || status==='convidado') data = {status,nome,telefone,email,obs};
-        else if(status==='aluno') data = {status:'aluno',nome:'',telefone:'',email:'',obs:''};
-        else if(status!==defaultStatusFor(id)) data = {status:'livre',nome:'',telefone:'',email:'',obs:''};
+        if(status==='vendido' || status==='convidado') data = Object.assign({status,nome,telefone,email,obs}, extraFields);
+        else if(status==='aluno') data = Object.assign({status:'aluno',nome:'',telefone:'',email:'',obs:''}, extraFields);
+        else if(existing.extra || status!==defaultStatusFor(id)) data = Object.assign({status:'livre',nome:'',telefone:'',email:'',obs:''}, extraFields);
         if(data===null){
           await db.ref('seats/'+currentSessionId+'/'+id).remove();
           if(SEATS_CACHE[currentSessionId]) delete SEATS_CACHE[currentSessionId][id];
@@ -1355,6 +1393,11 @@ async function openSeatModal(seatId){
     <p class="note" style="margin:-8px 0 6px;">Código interno: ${escapeHtml(seatId)}</p>
     <div class="sub">${escapeHtml(show.name||'')} — ${escapeHtml(sessionLabel(session))}</div>
     <div class="price-tag">${price!=null ? '💰 Valor deste assento: R$ '+price.toFixed(2).replace('.',',') : '⚠️ Preço não definido para o assento '+seatId+' (defina em Configurações)'}</div>
+    ${defaultStatusFor(seatId)==='aluno' ? (
+      data.extra
+        ? `<div class="note" style="background:#f7f3f5;border:1px solid #ece4e8;border-radius:9px;padding:8px 10px;margin-bottom:10px;">🎫 Cadeira extra — número fixo <b>Nº ${data.extraNumber}</b>. Vender ou mudar o status dela não muda esse número.<br/><button class="btn ghost tiny" id="btnUnmarkExtra" type="button" style="margin-top:6px;">↩️ Desfazer cadeira extra (volta a ser reservada pra aluno)</button></div>`
+        : `<div class="note" style="background:#f7f3f5;border:1px solid #ece4e8;border-radius:9px;padding:8px 10px;margin-bottom:10px;">Esta cadeira é reservada para alunos por padrão.<br/><button class="btn gold tiny" id="btnMarkExtra" type="button" style="margin-top:6px;">🎫 Vender como cadeira extra</button></div>`
+    ) : ''}
     <div class="status-choices">
       <label><input type="radio" name="st" value="livre" ${data.status==='livre'?'checked':''}><span>Livre</span></label>
       <label><input type="radio" name="st" value="vendido" ${data.status==='vendido'?'checked':''}><span>Vendido</span></label>
@@ -1390,6 +1433,39 @@ async function openSeatModal(seatId){
 
   overlay.querySelector('#btnCancelar').addEventListener('click', ()=> overlay.remove());
   overlay.addEventListener('click', e=>{ if(e.target===overlay) overlay.remove(); });
+  const btnMarkExtra = overlay.querySelector('#btnMarkExtra');
+  if(btnMarkExtra){
+    btnMarkExtra.addEventListener('click', async ()=>{
+      btnMarkExtra.disabled = true;
+      try{
+        const num = await markSeatAsExtra(currentSessionId, seatId);
+        showToast('Cadeira liberada como extra — Nº ' + num);
+        overlay.remove();
+        openSeatModal(seatId);
+      }catch(e){
+        console.error(e);
+        showToast('Erro ao liberar cadeira extra: ' + (e && e.message ? e.message : e));
+        btnMarkExtra.disabled = false;
+      }
+    });
+  }
+  const btnUnmarkExtra = overlay.querySelector('#btnUnmarkExtra');
+  if(btnUnmarkExtra){
+    btnUnmarkExtra.addEventListener('click', async ()=>{
+      if(!confirm('Desfazer esta cadeira extra? Ela volta a ser reservada para aluno e o número Nº '+data.extraNumber+' deixa de existir.')) return;
+      btnUnmarkExtra.disabled = true;
+      try{
+        await unmarkSeatAsExtra(currentSessionId, seatId);
+        showToast('Cadeira voltou a ser reservada para aluno');
+        overlay.remove();
+        openSeatModal(seatId);
+      }catch(e){
+        console.error(e);
+        showToast('Erro ao desfazer: ' + (e && e.message ? e.message : e));
+        btnUnmarkExtra.disabled = false;
+      }
+    });
+  }
   overlay.querySelector('#btnLimpar').addEventListener('click', async ()=>{
     await saveSeat(currentSessionId, seatId, null);
     overlay.remove();
@@ -1401,10 +1477,13 @@ async function openSeatModal(seatId){
     const telefone = overlay.querySelector('#fTel').value.trim();
     const email = overlay.querySelector('#fEmail').value.trim();
     const obs = overlay.querySelector('#fObs').value.trim();
-    if(status === defaultStatusFor(seatId)){
+    // Se esta é uma cadeira "extra", o número fixo dela (extra/extraNumber) tem que sobreviver ao
+    // salvar — senão, vender ou mudar o status dela apagaria a marcação e embaralharia a numeração.
+    const extraFields = data.extra ? { extra:true, extraNumber:data.extraNumber } : {};
+    if(!data.extra && status === defaultStatusFor(seatId)){
       await saveSeat(currentSessionId, seatId, null);
     } else {
-      await saveSeat(currentSessionId, seatId, { status, nome, telefone, email, obs });
+      await saveSeat(currentSessionId, seatId, Object.assign({ status, nome, telefone, email, obs }, extraFields));
     }
     overlay.remove();
     showToast('Assento atualizado');
